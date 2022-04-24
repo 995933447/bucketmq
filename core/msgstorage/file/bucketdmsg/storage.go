@@ -2,6 +2,7 @@ package bucketdmsg
 
 import (
 	"github.com/995933447/bucketmq/core/msgstorage"
+	"github.com/995933447/bucketmq/core/msgstorage/file"
 )
 
 type FileStorage struct {
@@ -9,6 +10,7 @@ type FileStorage struct {
 	DirOfDataFiles string
 	MinSeqOfIndexFiles uint32
 	MaxSeqOfIndexFiles uint32
+	MsgWriter *file.StorageWriter
 }
 
 func (fs *FileStorage) PushMsg(*msgstorage.Message) error {
