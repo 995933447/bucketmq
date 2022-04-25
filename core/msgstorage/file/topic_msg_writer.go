@@ -36,8 +36,8 @@ type topicMsgWriter struct {
 	finishInit bool
 	DirOfIndexFiles string
 	DirOfDataFiles string
-	BaseFileName string
-	FileSuffixSeq uint32
+	TopicName string
+	FileSeq uint32
 	*filesWriter
 	msgCh chan *msgstorage.Message
 	stopWritingMsgLoopCh chan struct{}
@@ -49,8 +49,8 @@ func (s *NewFilesOpenedSignal) getSeq() uint32 {
 }
 
 func (w *topicMsgWriter) getIndexFp() (*os.File, error) {
-	fileSeqStr := strconv.FormatUint(uint64(w.FileSuffixSeq), 10)
-	indexFileName := strings.TrimRight(w.DirOfDataFiles, "/") + w.BaseFileName + "." + fileSeqStr + ".idx"
+	fileSeqStr := strconv.FormatUint(uint64(w.FileSeq), 10)
+	indexFileName := strings.TrimRight(w.DirOfDataFiles, "/") + w.TopicName + "." + fileSeqStr + ".idx"
 	indexFp, err := os.OpenFile(indexFileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
 
@@ -59,8 +59,8 @@ func (w *topicMsgWriter) getIndexFp() (*os.File, error) {
 }
 
 func (w *topicMsgWriter) getDataFp() (*os.File, error) {
-	fileSeqStr := strconv.FormatUint(uint64(w.FileSuffixSeq), 10)
-	dataFileName := strings.TrimRight(w.DirOfDataFiles, "/") + w.BaseFileName + "." + fileSeqStr + ".dat"
+	fileSeqStr := strconv.FormatUint(uint64(w.FileSeq), 10)
+	dataFileName := strings.TrimRight(w.DirOfDataFiles, "/") + w.TopicName + "." + fileSeqStr + ".dat"
 	dataFp, err := os.OpenFile(dataFileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
 
@@ -100,16 +100,16 @@ func (w *topicMsgWriter) init(totalWritableMsgNum, totalWritableMsgBytes uint32)
 }
 
 func (w *topicMsgWriter) openNewMsgFiles() error {
-	w.FileSuffixSeq++
-	fileSeqStr := strconv.FormatUint(uint64(w.FileSuffixSeq), 10)
+	w.FileSeq++
+	fileSeqStr := strconv.FormatUint(uint64(w.FileSeq), 10)
 
-	dataFileName := strings.TrimRight(w.DirOfDataFiles, "/") + w.BaseFileName + "." + fileSeqStr + ".dat"
+	dataFileName := strings.TrimRight(w.DirOfDataFiles, "/") + w.TopicName + "." + fileSeqStr + ".dat"
 	dataFp, err := os.OpenFile(dataFileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
 		return err
 	}
 
-	indexFileName := strings.TrimRight(w.DirOfDataFiles, "/") + w.BaseFileName + "." + fileSeqStr + ".idx"
+	indexFileName := strings.TrimRight(w.DirOfDataFiles, "/") + w.TopicName + "." + fileSeqStr + ".idx"
 	indexFp, err := os.OpenFile(indexFileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
 		return err
@@ -121,39 +121,37 @@ func (w *topicMsgWriter) openNewMsgFiles() error {
 		fp: indexFp,
 	}
 	w.notifyNewFilesOpenedCh <- &NewFilesOpenedSignal{
-		fileSeq: w.FileSuffixSeq,
+		fileSeq: w.FileSeq,
 	}
 	
 	return nil
 }
 
-func (w *topicMsgWriter) msgFilesFull(newMsg *msgstorage.Message) bool {
-	msgDataPayload := newMsg.GetDataPayload()
-	encodedMsgDataPayloadLen :=  uint32(len(msgDataPayload.GetData()) + len(msgDataPayload.GetMsgId())) + DataPayloadBoundarySize
-
-	return w.indexFileWriter.writtenIndexNum >= w.indexFileWriter.maxWritableIndexNum - 1 ||
-		w.dataFileWriter.writtenDataBytes + encodedMsgDataPayloadLen >= w.dataFileWriter.maxWritableDataBytes
-}
-
 func (w *topicMsgWriter) writeMsgs(msgs []*msgstorage.Message) error {
 	for len(msgs) > 0 {
 		var (
-			readyWriteMsgs []*msgstorage.Message
+			batchWritableMsgs []*msgstorage.Message
+			batchWritableMsgDataPayloadBytes uint32
 			areMsgFilesFull bool
 		)
 
 		for _, msg := range msgs {
-			if w.msgFilesFull(msg) {
-				areMsgFilesFull = true
+			msgDataPayload := msg.GetDataPayload()
+			encodedMsgDataPayloadBytes :=  uint32(len(msgDataPayload.GetData()) + len(msgDataPayload.GetMsgId())) + DataPayloadBoundarySize
+			batchWritableMsgDataPayloadBytes =+ encodedMsgDataPayloadBytes
+
+			if w.indexFileWriter.writtenIndexNum + uint32(len(batchWritableMsgs)) >= w.indexFileWriter.maxWritableIndexNum - 1 ||
+				w.dataFileWriter.writtenDataBytes + batchWritableMsgDataPayloadBytes >= w.dataFileWriter.maxWritableDataBytes
+			{
 				break
 			}
 
-			readyWriteMsgs = append(readyWriteMsgs, msg)
+			batchWritableMsgs = append(batchWritableMsgs, msg)
 		}
 
-		readyWriteMsgNum := len(readyWriteMsgs)
+		batchWritableMsgNum := len(batchWritableMsgs)
 
-		if readyWriteMsgNum > 0 {
+		if batchWritableMsgNum > 0 {
 			indexesBuf, dataBuf, err := newMsgEncoder(msgs).encodeBuf()
 			if err != nil {
 				return err
@@ -161,8 +159,8 @@ func (w *topicMsgWriter) writeMsgs(msgs []*msgstorage.Message) error {
 
 			var(
 				dataBufLen = len(dataBuf)
-				totalWrittenNum int
 				indexesBufLen = len(indexesBuf)
+				totalWrittenNum int
 			)
 			for {
 				writtenNum, err := w.indexFileWriter.fp.Write(dataBuf)
@@ -191,14 +189,14 @@ func (w *topicMsgWriter) writeMsgs(msgs []*msgstorage.Message) error {
 					break
 				}
 
-				dataBuf = indexesBuf[writtenNum:]
+				indexesBuf = indexesBuf[writtenNum:]
 			}
-			w.indexFileWriter.writtenIndexNum += uint32(readyWriteMsgNum)
+			w.indexFileWriter.writtenIndexNum += uint32(batchWritableMsgNum)
 
-			if len(msgs) <= readyWriteMsgNum {
+			if len(msgs) <= batchWritableMsgNum {
 				msgs = nil
 			} else {
-				msgs = msgs[readyWriteMsgNum:]
+				msgs = msgs[batchWritableMsgNum:]
 			}
 		}
 
