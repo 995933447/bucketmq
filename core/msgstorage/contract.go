@@ -6,7 +6,7 @@ type MsgMetadata struct {
 	// 消息创建时间
 	createdAt uint32 `access:"r"`
 	// 消息优先级
-	priority uint8 `access:"r"`
+	priority uint16 `access:"r"`
 	// 延迟消费时间
 	delaySeconds uint32 `access:"r"`
 	// 最大执行时间
@@ -25,7 +25,7 @@ func (m *MsgMetadata) GetCreatedAt() uint32 {
 	return m.createdAt
 }
 
-func (m *MsgMetadata) GetPriority() uint8 {
+func (m *MsgMetadata) GetPriority() uint16 {
 	return m.priority
 }
 

@@ -131,18 +131,14 @@ func (w *topicMsgWriter) writeMsgs(msgs []*msgstorage.Message) error {
 	for len(msgs) > 0 {
 		var (
 			batchWritableMsgs []*msgstorage.Message
-			batchWritableMsgDataPayloadBytes uint32
+			batchWritableMsgDataBufBytes uint32
 			areMsgFilesFull bool
 		)
 
 		for _, msg := range msgs {
-			msgDataPayload := msg.GetDataPayload()
-			encodedMsgDataPayloadBytes :=  uint32(len(msgDataPayload.GetData()) + len(msgDataPayload.GetMsgId())) + DataPayloadBoundarySize
-			batchWritableMsgDataPayloadBytes =+ encodedMsgDataPayloadBytes
-
-			if w.indexFileWriter.writtenIndexNum + uint32(len(batchWritableMsgs)) >= w.indexFileWriter.maxWritableIndexNum - 1 ||
-				w.dataFileWriter.writtenDataBytes + batchWritableMsgDataPayloadBytes >= w.dataFileWriter.maxWritableDataBytes
-			{
+			batchWritableMsgDataBufBytes += getDefaultMsgEncoder().getMsgsDataBufBytes([]*msgstorage.Message{msg})
+			if w.indexFileWriter.writtenIndexNum + uint32(len(batchWritableMsgs)) >= w.indexFileWriter.maxWritableIndexNum ||
+				w.dataFileWriter.writtenDataBytes + batchWritableMsgDataBufBytes >= w.dataFileWriter.maxWritableDataBytes {
 				break
 			}
 
@@ -152,7 +148,7 @@ func (w *topicMsgWriter) writeMsgs(msgs []*msgstorage.Message) error {
 		batchWritableMsgNum := len(batchWritableMsgs)
 
 		if batchWritableMsgNum > 0 {
-			indexesBuf, dataBuf, err := newMsgEncoder(msgs).encodeBuf()
+			indexesBuf, dataBuf, err := getDefaultMsgEncoder().encodeBuf(msgs)
 			if err != nil {
 				return err
 			}
