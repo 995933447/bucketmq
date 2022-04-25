@@ -177,6 +177,7 @@ func (w *topicMsgWriter) writeMsgs(msgs []*msgstorage.Message) error {
 
 				dataBuf = dataBuf[writtenNum:]
 			}
+			w.dataFileWriter.writtenDataBytes += uint32(dataBufLen)
 
 			totalWrittenNum = 0
 			for {
@@ -192,16 +193,12 @@ func (w *topicMsgWriter) writeMsgs(msgs []*msgstorage.Message) error {
 
 				dataBuf = indexesBuf[writtenNum:]
 			}
+			w.indexFileWriter.writtenIndexNum += uint32(readyWriteMsgNum)
 
 			if len(msgs) <= readyWriteMsgNum {
 				msgs = nil
 			} else {
 				msgs = msgs[readyWriteMsgNum:]
-			}
-
-			if !areMsgFilesFull {
-				w.indexFileWriter.writtenIndexNum += uint32(readyWriteMsgNum)
-				w.dataFileWriter.writtenDataBytes += uint32(dataBufLen)
 			}
 		}
 
