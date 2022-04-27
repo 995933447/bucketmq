@@ -1,5 +1,7 @@
 package msgstorage
 
+import "github.com/995933447/bucketmq/utils/uniqid"
+
 type MsgMetadata struct {
 	// 消息入的桶
 	bucket uint32 `access:"r"`
@@ -15,6 +17,12 @@ type MsgMetadata struct {
 	maxRetryCnt uint32 `access:"r"`
 	// 消息过期时间
 	expireAt uint32 `access:"r"`
+	// 消息ID
+	msgId string `access:"r"`
+}
+
+func (m *MsgMetadata) MsgId() string {
+	return m.msgId
 }
 
 func (m *MsgMetadata) GetBucket() uint32 {
@@ -48,16 +56,10 @@ func (m *MsgMetadata) GetExpireAt() uint32 {
 type MsgDataPayload struct {
 	// 消息内容
 	data []byte	`access:"r"`
-	// 消息id,需要保证唯一性
-	msgId string `access:"r"`
 }
 
 func (m *MsgDataPayload) GetData() []byte {
 	return m.data
-}
-
-func (m *MsgDataPayload) GetMsgId() string {
-	return m.msgId
 }
 
 type Message struct {
@@ -73,7 +75,7 @@ type NewMsgReq struct {
 	// 消息创建时间
 	CreatedAt uint32
 	// 消息优先级
-	Priority uint8
+	Priority uint16
 	// 延迟消费时间
 	DelaySeconds uint32
 	// 最大执行时间
@@ -86,11 +88,14 @@ type NewMsgReq struct {
 	ExpireAt uint32
 }
 
-func NewMsg(req NewMsgReq) *Message {
+func NewMsg(req *NewMsgReq) *Message {
 	msgId := req.Id
 	if msgId == "" {
-
+		msgId = uniqid.GenUuid()
+	} else if len(msgId) > 36 {
+		msgId = msgId[:36]
 	}
+
 	return &Message{
 		metadata: &MsgMetadata{
 			bucket:          req.Bucket,
@@ -100,10 +105,10 @@ func NewMsg(req NewMsgReq) *Message {
 			maxExecTimeLong: req.MaxExecTimeLong,
 			maxRetryCnt:     req.MaxRetryCnt,
 			expireAt:        req.ExpireAt,
+			msgId:           msgId,
 		},
 		dataPayload: &MsgDataPayload{
 			data:			 req.Data,
-			msgId: 			 msgId,
 		},
 	}
 }

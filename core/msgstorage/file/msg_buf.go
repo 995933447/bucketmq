@@ -1,6 +1,7 @@
 package file
 
 import (
+	"encoding/binary"
 	"github.com/995933447/bucketmq/core/msgstorage"
 	"sync"
 )
@@ -11,8 +12,12 @@ const (
 )
 
 const (
+	// 0x12 + 0x34 = 2 bytes
 	bufBoundarySize = 2
-	indexBufSize = 25
+	// indexes buf len: Bucket(4 bytes) + CreatedAt(4 bytes) + Priority(2 byte)
+	//	+ DelaySeconds(4 bytes) + MaxExecTimeLong(4 bytes) + MaxRetryCnt(4 bytes) + ExpireAt(4 bytes)
+	//	+ DataLen(4 bytes) + MsgIdLen(4 bytes) + bufBoundarySize(2 bytes) = 34 bytes
+	indexBufSize = 68
 )
 
 var (
@@ -40,16 +45,12 @@ func getDefaultMsgEncoder() *MsgEncoder {
 func (e *MsgEncoder) getMsgsDataBufBytes(msgs []*msgstorage.Message) uint32 {
 	var totalBytes uint32
 	for _, msg := range msgs {
-		msgDataPayload := msg.GetDataPayload()
-		dataBufBytes :=  uint32(len(msgDataPayload.GetData()) + len(msgDataPayload.GetMsgId())) + bufBoundarySize
-		totalBytes =+ dataBufBytes
+		totalBytes =+ uint32(len(msg.GetDataPayload().GetData())) + bufBoundarySize
 	}
 	return totalBytes
 }
 
 func (e *MsgEncoder) encodeBuf(msgs []*msgstorage.Message) (indexesBuf []byte, dataBuf []byte, err error) {
-	// indexes buf len: Bucket(4 bytes) + CreatedAt(4 bytes) + Priority(1 byte)
-	//	+ DelaySeconds(4 bytes) + MaxExecTimeLong(4 bytes) + MaxRetryCnt(4 bytes) + ExpireAt(4 bytes) = 25 bytes
 	indexesBufBytes := len(msgs) * indexBufSize
 	dataBufSizeBytes := e.getMsgsDataBufBytes(msgs)
 	if indexesBufBytes > cap(e.indexesBuf) {
@@ -59,17 +60,35 @@ func (e *MsgEncoder) encodeBuf(msgs []*msgstorage.Message) (indexesBuf []byte, d
 		e.dataBuf = make([]byte, dataBufSizeBytes)
 	}
 
-	//littleEndian := binary.LittleEndian
-	//for i, msg := range msgs {
-		//writableIndexesBuf := e.indexesBuf[i * indexBufSize:]
-		//writableIndexesBuf[0] = bufBeginBoundary
-		//writableIndexesBuf[3] = byte(msg.GetMetadata().GetCreatedAt())
-		//littleEndian.PutUint16(writableIndexesBuf, bufBeginBoundary)
-		//littleEndian.PutUint32(writableIndexesBuf, msg.GetMetadata().GetCreatedAt())
-		//littleEndian.PutUint32(writableIndexesBuf, msg.GetMetadata().GetBucket())
-		//littleEndian.PutUint32(writableIndexesBuf, msg.GetMetadata().GetExpireAt())
-		//littleEndian.PutUint16(writableIndexesBuf, msg.GetMetadata().GetPriority())
-	//}
+	var (
+		endian = binary.LittleEndian
+		writtenDataBufLen int
+	)
+	for i, msg := range msgs {
+		var (
+			metadata = msg.GetMetadata()
+			dataPayload = msg.GetDataPayload()
+			dataLen = len(dataPayload.GetData())
+		)
+
+		writableIndexesBuf := e.indexesBuf[i * indexBufSize:]
+		writableIndexesBuf[0] = bufBeginBoundary
+		endian.PutUint32(writableIndexesBuf[1:5], metadata.GetCreatedAt())
+		endian.PutUint32(writableIndexesBuf[5:9], metadata.GetBucket())
+		endian.PutUint32(writableIndexesBuf[9:13], metadata.GetExpireAt())
+		endian.PutUint16(writableIndexesBuf[13:15], metadata.GetPriority())
+		endian.PutUint32(writableIndexesBuf[15:19], metadata.GetDelaySeconds())
+		endian.PutUint32(writableIndexesBuf[19:23], metadata.GetMaxExecTimeLong())
+		endian.PutUint32(writableIndexesBuf[23:27], metadata.GetMaxRetryCnt())
+		endian.PutUint32(writableIndexesBuf[27:31], uint32(dataLen))
+		copy(writableIndexesBuf[31:67], metadata.MsgId())
+		writableIndexesBuf[67] = bufEndBoundary
+
+		writableDataBuf := e.dataBuf[writtenDataBufLen:]
+		writableDataBuf[0] = bufBeginBoundary
+		copy(writableDataBuf[1:], dataPayload.GetData())
+		writableDataBuf[dataLen + 1] = bufEndBoundary
+	}
 
 	indexesBuf = e.indexesBuf[:indexesBufBytes]
 	dataBuf = e.dataBuf[:dataBufSizeBytes]

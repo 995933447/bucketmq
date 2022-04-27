@@ -5,6 +5,11 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
+)
+
+const (
+	defaultSyncToDiskInterval = time.Second * 5
 )
 
 type indexFileWriter struct {
@@ -24,6 +29,20 @@ type filesWriter struct {
 	*dataFileWriter
 }
 
+func (fw *filesWriter) syncToDisk() error {
+	if err := fw.indexFileWriter.fp.Sync(); err != nil {
+		return err
+	}
+	if err := fw.dataFileWriter.fp.Sync(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (fw *filesWriter) checkFilesCorruption() (bool, error) {
+	return false, nil
+}
+
 type NewFilesOpenedSignal struct {
 	fileSeq uint32 `access:"r"`
 }
@@ -33,64 +52,128 @@ func (s *NewFilesOpenedSignal) getFileSeq() uint32 {
 }
 
 type topicMsgWriter struct {
-	finishInit bool
-	DirOfIndexFiles string
-	DirOfDataFiles string
+	IndexDir string
+	DataDir string
 	TopicName string
 	FileSeq uint32
 	*filesWriter
 	msgCh chan *msgstorage.Message
 	stopWritingMsgLoopCh chan struct{}
 	notifyNewFilesOpenedCh chan *NewFilesOpenedSignal
+	syncToDiskInterval time.Duration
+	hasFileCorruption bool
+	finishInit bool
+}
+
+func newTopicMsgWriter(
+	topicName, indexDir, dataDir string,
+	beginFileSeq, maxWritableMsgNum, maxWritableMsgBytes uint32,
+	syncToDiskInterval time.Duration,
+	) (*topicMsgWriter, error) {
+	if syncToDiskInterval == 0 {
+		syncToDiskInterval = defaultSyncToDiskInterval
+	}
+
+	writer := &topicMsgWriter{
+		IndexDir: indexDir,
+		DataDir: dataDir,
+		TopicName: topicName,
+		FileSeq: beginFileSeq,
+		syncToDiskInterval: syncToDiskInterval,
+	}
+
+	if err := writer.init(maxWritableMsgNum, maxWritableMsgBytes); err != nil {
+		return nil, err
+	}
+
+	return writer, nil
 }
 
 func (s *NewFilesOpenedSignal) getSeq() uint32 {
 	return s.fileSeq
 }
 
-func (w *topicMsgWriter) getIndexFp() (*os.File, error) {
+func (w *topicMsgWriter) checkFilesCorruption() (bool, error) {
+	var err error
+	if w.hasFileCorruption, err = w.filesWriter.checkFilesCorruption(); err != nil {
+		return false, err
+	}
+	return w.hasFileCorruption, nil
+}
+
+func (w *topicMsgWriter) makeIndexFp() (*os.File, error) {
+	_, err := os.Stat(w.IndexDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		if err = os.MkdirAll(w.IndexDir, os.FileMode(0755)); err != nil {
+			return nil, err
+		}
+	}
+
 	fileSeqStr := strconv.FormatUint(uint64(w.FileSeq), 10)
-	indexFileName := strings.TrimRight(w.DirOfDataFiles, "/") + w.TopicName + "." + fileSeqStr + ".idx"
+	indexFileName := strings.TrimRight(w.IndexDir, "/") + "/" + w.TopicName + "." + fileSeqStr + ".idx"
 	indexFp, err := os.OpenFile(indexFileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
-
+		return nil, err
 	}
 	return indexFp, nil
 }
 
-func (w *topicMsgWriter) getDataFp() (*os.File, error) {
+func (w *topicMsgWriter) makeDataFp() (*os.File, error) {
+	_, err := os.Stat(w.DataDir)
+	if err != nil {
+		if !os.IsNotExist(err) {
+			return nil, err
+		}
+		if err = os.MkdirAll(w.DataDir, os.FileMode(0755)); err != nil {
+			return nil, err
+		}
+	}
+
 	fileSeqStr := strconv.FormatUint(uint64(w.FileSeq), 10)
-	dataFileName := strings.TrimRight(w.DirOfDataFiles, "/") + w.TopicName + "." + fileSeqStr + ".dat"
+	dataFileName := strings.TrimRight(w.DataDir, "/") + "/" + w.TopicName + "." + fileSeqStr + ".dat"
 	dataFp, err := os.OpenFile(dataFileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
-
+		return nil, err
 	}
 	return dataFp, nil
 }
 
-func (w *topicMsgWriter) init(totalWritableMsgNum, totalWritableMsgBytes uint32) error {
+func (w *topicMsgWriter) init(maxWritableMsgNum, maxWritableMsgBytes uint32) error {
 	if w.finishInit {
 		return nil
 	}
 	
-	dataFp, err := w.getDataFp()
+	dataFp, err := w.makeDataFp()
 	if err != nil {
 		return err
 	}
 
-	indexFp, err := w.getIndexFp()
+	indexFp, err := w.makeIndexFp()
 	if err != nil {
 		return err
 	}
 
-	w.dataFileWriter = &dataFileWriter{
-		maxWritableDataBytes: totalWritableMsgBytes,
-		fp: dataFp,
+	w.filesWriter = &filesWriter{
+		dataFileWriter: &dataFileWriter{
+			maxWritableDataBytes: maxWritableMsgBytes,
+			fp: dataFp,
+		},
+		indexFileWriter: &indexFileWriter{
+			maxWritableIndexNum: maxWritableMsgNum,
+			fp: indexFp,
+		},
 	}
-	w.indexFileWriter = &indexFileWriter{
-		maxWritableIndexNum: totalWritableMsgNum,
-		fp: indexFp,
+
+	hasFileCorruption, err := w.checkFilesCorruption()
+	if err != nil {
+		return err
+	} else if hasFileCorruption {
+		return bucketmqerrdef
 	}
+
 	w.msgCh = make(chan *msgstorage.Message, 10000)
 	w.stopWritingMsgLoopCh = make(chan struct{})
 	w.notifyNewFilesOpenedCh = make(chan *NewFilesOpenedSignal)
@@ -101,24 +184,25 @@ func (w *topicMsgWriter) init(totalWritableMsgNum, totalWritableMsgBytes uint32)
 
 func (w *topicMsgWriter) openNewMsgFiles() error {
 	w.FileSeq++
-	fileSeqStr := strconv.FormatUint(uint64(w.FileSeq), 10)
 
-	dataFileName := strings.TrimRight(w.DirOfDataFiles, "/") + w.TopicName + "." + fileSeqStr + ".dat"
-	dataFp, err := os.OpenFile(dataFileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
+	dataFp, err := w.makeDataFp()
 	if err != nil {
 		return err
 	}
 
-	indexFileName := strings.TrimRight(w.DirOfDataFiles, "/") + w.TopicName + "." + fileSeqStr + ".idx"
-	indexFp, err := os.OpenFile(indexFileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
+	indexFp, err := w.makeIndexFp()
 	if err != nil {
 		return err
 	}
-	w.dataFileWriter = &dataFileWriter{
-		fp: dataFp,
-	}
-	w.indexFileWriter = &indexFileWriter{
-		fp: indexFp,
+	w.filesWriter = &filesWriter{
+		dataFileWriter: &dataFileWriter{
+			maxWritableDataBytes: w.maxWritableDataBytes,
+			fp: dataFp,
+		},
+		indexFileWriter: &indexFileWriter{
+			maxWritableIndexNum: w.maxWritableIndexNum,
+			fp: indexFp,
+		},
 	}
 	w.notifyNewFilesOpenedCh <- &NewFilesOpenedSignal{
 		fileSeq: w.FileSeq,
@@ -139,6 +223,7 @@ func (w *topicMsgWriter) writeMsgs(msgs []*msgstorage.Message) error {
 			batchWritableMsgDataBufBytes += getDefaultMsgEncoder().getMsgsDataBufBytes([]*msgstorage.Message{msg})
 			if w.indexFileWriter.writtenIndexNum + uint32(len(batchWritableMsgs)) >= w.indexFileWriter.maxWritableIndexNum ||
 				w.dataFileWriter.writtenDataBytes + batchWritableMsgDataBufBytes >= w.dataFileWriter.maxWritableDataBytes {
+				areMsgFilesFull = true
 				break
 			}
 
@@ -159,7 +244,7 @@ func (w *topicMsgWriter) writeMsgs(msgs []*msgstorage.Message) error {
 				totalWrittenNum int
 			)
 			for {
-				writtenNum, err := w.indexFileWriter.fp.Write(dataBuf)
+				writtenNum, err := w.dataFileWriter.fp.Write(dataBuf)
 				if err != nil {
 					return err
 				}
@@ -208,26 +293,40 @@ func (w *topicMsgWriter) writeMsgs(msgs []*msgstorage.Message) error {
 	return nil
 }
 
-func (w *topicMsgWriter) runWritingMsgLoop() error {
+func (w *topicMsgWriter) loop() error {
+	syncToDiskTick := time.NewTicker(w.syncToDiskInterval)
+	defer syncToDiskTick.Stop()
 	for {
-		var msgs []*msgstorage.Message
-		msg := <- w.msgCh
-		msgs = append(msgs, msg)
-		for {
-			var moreMsg *msgstorage.Message
-			select {
-				case moreMsg = <- w.msgCh:
-					msgs = append(msgs, moreMsg)
-				default:
-			}
-			if moreMsg == nil {
-				break
-			}
-		}
+		select {
+			case msg := <- w.msgCh:
+				var msgs []*msgstorage.Message
+				msgs = append(msgs, msg)
+				for {
+					var moreMsg *msgstorage.Message
+					select {
+						case moreMsg = <- w.msgCh:
+							msgs = append(msgs, moreMsg)
+						default:
+					}
+					if moreMsg == nil {
+						break
+					}
+				}
 
-		err := w.writeMsgs(msgs)
-		if err != nil {
-			return err
+				err := w.writeMsgs(msgs)
+				if err != nil {
+					return err
+				}
+			case <- syncToDiskTick.C:
+				var (
+					hasFileCorruption bool
+					err error
+				)
+				if hasFileCorruption, err = w.checkFilesCorruption(); err != nil {
+					return err
+				} else if !hasFileCorruption {
+					_ =	w.syncToDisk()
+				}
 		}
 	}
 }
