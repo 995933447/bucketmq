@@ -2,6 +2,7 @@ package file
 
 import (
 	"github.com/995933447/bucketmq/core/msgstorage"
+	errdef "github.com/995933447/bucketmqerrdef"
 	"os"
 	"strconv"
 	"strings"
@@ -40,6 +41,24 @@ func (fw *filesWriter) syncToDisk() error {
 }
 
 func (fw *filesWriter) checkFilesCorruption() (bool, error) {
+	indexFileInfo, err := fw.indexFileWriter.fp.Stat()
+	if err != nil {
+		return false, err
+	}
+
+	if indexFileInfo.Size() % indexBufSize > 0 || uint32(indexFileInfo.Size() / indexBufSize) != fw.indexFileWriter.writtenIndexNum {
+		return true, nil
+	}
+
+	dataFileInfo, err := fw.dataFileWriter.fp.Stat()
+	if err != nil {
+		return false, err
+	}
+
+	if uint32(dataFileInfo.Size()) != fw.dataFileWriter.writtenDataBytes {
+		return true, nil
+	}
+
 	return false, nil
 }
 
@@ -171,7 +190,7 @@ func (w *topicMsgWriter) init(maxWritableMsgNum, maxWritableMsgBytes uint32) err
 	if err != nil {
 		return err
 	} else if hasFileCorruption {
-		return bucketmqerrdef
+		return errdef.FileCorruptionErr
 	}
 
 	w.msgCh = make(chan *msgstorage.Message, 10000)
@@ -212,6 +231,10 @@ func (w *topicMsgWriter) openNewMsgFiles() error {
 }
 
 func (w *topicMsgWriter) writeMsgs(msgs []*msgstorage.Message) error {
+	if w.hasFileCorruption {
+		return errdef.FileCorruptionErr
+	}
+
 	for len(msgs) > 0 {
 		var (
 			batchWritableMsgs []*msgstorage.Message
@@ -324,7 +347,9 @@ func (w *topicMsgWriter) loop() error {
 				)
 				if hasFileCorruption, err = w.checkFilesCorruption(); err != nil {
 					return err
-				} else if !hasFileCorruption {
+				} else if hasFileCorruption {
+					return errdef.FileCorruptionErr
+				} else {
 					_ =	w.syncToDisk()
 				}
 		}
