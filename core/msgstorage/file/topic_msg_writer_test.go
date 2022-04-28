@@ -21,6 +21,7 @@ func mockTopicMsgWriter() (*topicMsgWriter, error) {
 		1,
 		100,
 		100,
+		0,
 	)
 }
 

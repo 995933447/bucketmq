@@ -77,7 +77,7 @@ type topicMsgWriter struct {
 	FileSeq uint32
 	*filesWriter
 	msgCh chan *msgstorage.Message
-	stopWritingMsgLoopCh chan struct{}
+	stopLoopCh chan struct{}
 	notifyNewFilesOpenedCh chan *NewFilesOpenedSignal
 	syncToDiskInterval time.Duration
 	hasFileCorruption bool
@@ -190,7 +190,7 @@ func (w *topicMsgWriter) init(maxWritableMsgNum, maxWritableMsgBytes uint32) err
 	}
 
 	w.msgCh = make(chan *msgstorage.Message, 10000)
-	w.stopWritingMsgLoopCh = make(chan struct{})
+	w.stopLoopCh = make(chan struct{})
 	w.notifyNewFilesOpenedCh = make(chan *NewFilesOpenedSignal)
 	w.finishInit = true
 
@@ -348,6 +348,8 @@ func (w *topicMsgWriter) loop() error {
 				} else {
 					_ =	w.syncToDisk()
 				}
+			case <- w.stopLoopCh:
+				return nil
 		}
 	}
 }
