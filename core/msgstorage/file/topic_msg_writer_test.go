@@ -1,6 +1,8 @@
 package file
 
 import (
+	"context"
+	"github.com/995933447/bucketmq/core/log"
 	"github.com/995933447/bucketmq/core/msgstorage"
 	"testing"
 	"time"
@@ -15,6 +17,7 @@ func TestInitTopicMsgWriter(t *testing.T) {
 
 func mockTopicMsgWriter() (*topicMsgWriter, error) {
 	return newTopicMsgWriter(
+		context.TODO(),
 		"test_topic",
 		"/data/bucketmq/index",
 		"/data/bucketmq/data",
@@ -22,13 +25,14 @@ func mockTopicMsgWriter() (*topicMsgWriter, error) {
 		100,
 		100,
 		0,
+		log.DefaultLogger,
 	)
 }
 
 func TestWriteTopicMsg(t *testing.T) {
 	w, _ := mockTopicMsgWriter()
 	go func() {
-		if err := w.loop(); err != nil {
+		if err := w.loop(context.Background()); err != nil {
 			t.Error(err)
 			return
 		}

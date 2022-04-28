@@ -50,7 +50,7 @@ func (e *MsgEncoder) getMsgsDataBufBytes(msgs []*msgstorage.Message) uint32 {
 	return totalBytes
 }
 
-func (e *MsgEncoder) encodeBuf(msgs []*msgstorage.Message) (indexesBuf []byte, dataBuf []byte, err error) {
+func (e *MsgEncoder) encodeBuf(msgs []*msgstorage.Message) (indexesBuf []byte, dataBuf []byte) {
 	indexesBufBytes := len(msgs) * indexBufSize
 	dataBufSizeBytes := e.getMsgsDataBufBytes(msgs)
 	if indexesBufBytes > cap(e.indexesBuf) {
@@ -81,7 +81,7 @@ func (e *MsgEncoder) encodeBuf(msgs []*msgstorage.Message) (indexesBuf []byte, d
 		endian.PutUint32(writableIndexesBuf[19:23], metadata.GetMaxExecTimeLong())
 		endian.PutUint32(writableIndexesBuf[23:27], metadata.GetMaxRetryCnt())
 		endian.PutUint32(writableIndexesBuf[27:31], uint32(dataLen))
-		copy(writableIndexesBuf[31:67], metadata.MsgId())
+		copy(writableIndexesBuf[31:67], metadata.GetMsgId())
 		writableIndexesBuf[67] = bufEndBoundary
 
 		writableDataBuf := e.dataBuf[writtenDataBufLen:]

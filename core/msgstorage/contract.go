@@ -1,6 +1,9 @@
 package msgstorage
 
-import "github.com/995933447/bucketmq/utils/uniqid"
+import (
+	"context"
+	"github.com/995933447/bucketmq/utils/uniqid"
+)
 
 type MsgMetadata struct {
 	// 消息入的桶
@@ -21,7 +24,7 @@ type MsgMetadata struct {
 	msgId string `access:"r"`
 }
 
-func (m *MsgMetadata) MsgId() string {
+func (m *MsgMetadata) GetMsgId() string {
 	return m.msgId
 }
 
@@ -132,11 +135,11 @@ type RetryMsgReq struct {
 
 type MsgStorage interface {
 	// PushMsg 写入消息
-	PushMsg(*Message) error
+	PushMsg(context.Context, *Message) error
 	// PopMsg 弹出消息
-	PopMsg() (*Message, error)
+	PopMsg(ctx context.Context) (*Message, error)
 	// SetMsgConsumptionCompleted 确认消息消费完成
-	SetMsgConsumptionCompleted(msgId string) error
+	SetMsgConsumptionCompleted(ctx context.Context, msgId string) error
 	// SetMsgWillBeRetried 消息重试
-	SetMsgWillBeRetried(*RetryMsgReq) error
+	SetMsgWillBeRetried(context.Context, *RetryMsgReq) error
 }

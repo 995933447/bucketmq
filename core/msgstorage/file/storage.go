@@ -1,6 +1,8 @@
 package file
 
 import (
+	"context"
+	"github.com/995933447/bucketmq/core/log"
 	"github.com/995933447/bucketmq/core/msgstorage"
 )
 
@@ -12,15 +14,17 @@ type FileStorage struct {
 	topicName string `access:"r"`
 	*topicMsgWriter
 	finishInit bool
+	logger log.Logger `access:"rw"`
 }
 
-func (fs *FileStorage) init(maxWritableTopicMsgNum, maxWritableTopicMsgBytes uint32) error {
+func (fs *FileStorage) init(ctx context.Context, maxWritableTopicMsgNum, maxWritableTopicMsgBytes uint32) error {
 	if fs.finishInit {
 		return nil
 	}
 
 	var err error
 	fs.topicMsgWriter, err = newTopicMsgWriter(
+		ctx,
 		fs.topicName,
 		fs.indexDir,
 		fs.dataDir,
@@ -28,13 +32,26 @@ func (fs *FileStorage) init(maxWritableTopicMsgNum, maxWritableTopicMsgBytes uin
 		maxWritableTopicMsgBytes,
 		maxWritableTopicMsgNum,
 		defaultSyncToDiskInterval,
+		fs.logger,
 	)
 	if err != nil {
+		log.DefaultLogger.Error(ctx, err)
 		return err
 	}
 
 	fs.finishInit = true
 	return nil
+}
+
+func (fs *FileStorage) GetLogger() log.Logger {
+	return fs.logger
+}
+
+func (fs *FileStorage) SetLogger(logger log.Logger) {
+	if logger == nil {
+		return
+	}
+	fs.logger = logger
 }
 
 func (fs *FileStorage) GetTopicName() string {
