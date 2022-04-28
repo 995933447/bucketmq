@@ -245,6 +245,7 @@ func (w *topicMsgWriter) openNewMsgFiles(ctx context.Context) error {
 
 func (w *topicMsgWriter) writeMsgs(ctx context.Context, msgs []*msgstorage.Message) error {
 	if w.hasFileCorruption {
+		w.logger.Error(ctx, errdef.FileCorruptionErr)
 		return errdef.FileCorruptionErr
 	}
 
@@ -319,6 +320,7 @@ func (w *topicMsgWriter) writeMsgs(ctx context.Context, msgs []*msgstorage.Messa
 		}
 
 		if err := w.openNewMsgFiles(ctx); err != nil {
+			w.logger.Error(ctx, err)
 			return err
 		}
 	}
