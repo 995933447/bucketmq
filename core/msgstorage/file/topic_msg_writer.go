@@ -327,36 +327,34 @@ func (w *topicMsgWriter) writeMsgs(ctx context.Context, msgs []*msgstorage.Messa
 }
 
 func (w *topicMsgWriter) loop(ctx context.Context) error {
-	var (
-		syncToDiskTick = time.NewTicker(w.syncToDiskInterval)
-		writeMsgsAsPossible = func(firstMsg *msgstorage.Message) error {
-			var msgs []*msgstorage.Message
-			if firstMsg != nil {
-				msgs = append(msgs, firstMsg)
-			}
-			for {
-				var moreMsg *msgstorage.Message
-				select {
-					case moreMsg = <- w.msgCh:
-						msgs = append(msgs, moreMsg)
-					default:
-				}
-				if moreMsg == nil {
-					break
-				}
-			}
-
-			err := w.writeMsgs(ctx, msgs)
-			if err != nil {
-				w.logger.Error(ctx, err)
-				return err
-			}
-
-			return nil
-		}
-	)
-
+	syncToDiskTick := time.NewTicker(w.syncToDiskInterval)
 	defer syncToDiskTick.Stop()
+
+	writeMsgsAsPossible := func(firstMsg *msgstorage.Message) error {
+		var msgs []*msgstorage.Message
+		if firstMsg != nil {
+			msgs = append(msgs, firstMsg)
+		}
+		for {
+			var moreMsg *msgstorage.Message
+			select {
+			case moreMsg = <- w.msgCh:
+				msgs = append(msgs, moreMsg)
+			default:
+			}
+			if moreMsg == nil {
+				break
+			}
+		}
+
+		err := w.writeMsgs(ctx, msgs)
+		if err != nil {
+			w.logger.Error(ctx, err)
+			return err
+		}
+
+		return nil
+	}
 
 	for {
 		select {
