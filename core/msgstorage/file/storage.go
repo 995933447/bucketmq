@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/995933447/bucketmq/core/log"
 	"github.com/995933447/bucketmq/core/msgstorage"
+	errdef "github.com/995933447/bucketmqerrdef"
 )
 
 type FileStorage struct {
@@ -49,6 +50,7 @@ func (fs *FileStorage) GetLogger() log.Logger {
 
 func (fs *FileStorage) SetLogger(logger log.Logger) {
 	if logger == nil {
+		fs.logger.Error(context.Background(), errdef.NewErr(errdef.ErrCodeArgsInvalid, "new setting logger is nil!"))
 		return
 	}
 	fs.logger = logger
