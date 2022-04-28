@@ -338,9 +338,9 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 		for {
 			var moreMsg *msgstorage.Message
 			select {
-			case moreMsg = <- w.msgCh:
-				msgs = append(msgs, moreMsg)
-			default:
+				case moreMsg = <- w.msgCh:
+					msgs = append(msgs, moreMsg)
+				default:
 			}
 			if moreMsg == nil {
 				break
