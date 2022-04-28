@@ -108,10 +108,6 @@ func newTopicMsgWriter(
 	return writer, nil
 }
 
-func (s *NewFilesOpenedSignal) getSeq() uint32 {
-	return s.fileSeq
-}
-
 func (w *topicMsgWriter) checkFilesCorruption() (bool, error) {
 	var err error
 	if w.hasFileCorruption, err = w.filesWriter.checkFilesCorruption(); err != nil {

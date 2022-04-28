@@ -63,8 +63,8 @@ func (m *MsgDataPayload) GetData() []byte {
 }
 
 type Message struct {
-	metadata *MsgMetadata
-	dataPayload *MsgDataPayload
+	metadata *MsgMetadata `access:"r"`
+	dataPayload *MsgDataPayload `access:"r"`
 }
 
 type NewMsgReq struct {

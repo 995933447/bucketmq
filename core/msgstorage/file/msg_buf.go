@@ -62,7 +62,7 @@ func (e *MsgEncoder) encodeBuf(msgs []*msgstorage.Message) (indexesBuf []byte, d
 
 	var (
 		endian = binary.LittleEndian
-		writtenDataBufLen int
+		writtenDataBufLen uint32
 	)
 	for i, msg := range msgs {
 		var (
@@ -88,6 +88,7 @@ func (e *MsgEncoder) encodeBuf(msgs []*msgstorage.Message) (indexesBuf []byte, d
 		writableDataBuf[0] = bufBeginBoundary
 		copy(writableDataBuf[1:], dataPayload.GetData())
 		writableDataBuf[dataLen + 1] = bufEndBoundary
+		writtenDataBufLen += e.getMsgsDataBufBytes([]*msgstorage.Message{msg})
 	}
 
 	indexesBuf = e.indexesBuf[:indexesBufBytes]
