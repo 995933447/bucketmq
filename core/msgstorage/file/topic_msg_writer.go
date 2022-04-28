@@ -90,6 +90,7 @@ type topicMsgWriter struct {
 	hasFileCorruption bool
 	finishInit bool
 	logger log.Logger
+	readyStopLoop bool
 }
 
 func newTopicMsgWriter(
@@ -326,27 +327,41 @@ func (w *topicMsgWriter) writeMsgs(ctx context.Context, msgs []*msgstorage.Messa
 }
 
 func (w *topicMsgWriter) loop(ctx context.Context) error {
-	syncToDiskTick := time.NewTicker(w.syncToDiskInterval)
+	var (
+		syncToDiskTick = time.NewTicker(w.syncToDiskInterval)
+		writeMsgsAsPossible = func(firstMsg *msgstorage.Message) error {
+			var msgs []*msgstorage.Message
+			if firstMsg != nil {
+				msgs = append(msgs, firstMsg)
+			}
+			for {
+				var moreMsg *msgstorage.Message
+				select {
+					case moreMsg = <- w.msgCh:
+						msgs = append(msgs, moreMsg)
+					default:
+				}
+				if moreMsg == nil {
+					break
+				}
+			}
+
+			err := w.writeMsgs(ctx, msgs)
+			if err != nil {
+				w.logger.Error(ctx, err)
+				return err
+			}
+
+			return nil
+		}
+	)
+
 	defer syncToDiskTick.Stop()
 
 	for {
 		select {
 			case msg := <- w.msgCh:
-				var msgs []*msgstorage.Message
-				msgs = append(msgs, msg)
-				for {
-					var moreMsg *msgstorage.Message
-					select {
-						case moreMsg = <- w.msgCh:
-							msgs = append(msgs, moreMsg)
-						default:
-					}
-					if moreMsg == nil {
-						break
-					}
-				}
-
-				err := w.writeMsgs(ctx, msgs)
+				err := writeMsgsAsPossible(msg)
 				if err != nil {
 					w.logger.Error(ctx, err)
 					return err
@@ -365,6 +380,12 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 					_ =	w.syncToDisk(ctx)
 				}
 			case <- w.stopLoopCh:
+				w.readyStopLoop = true
+				err := writeMsgsAsPossible(nil)
+				if err != nil {
+					w.logger.Error(ctx, err)
+					return err
+				}
 				return nil
 		}
 	}
