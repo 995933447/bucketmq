@@ -363,6 +363,10 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 			}
 		}
 
+		if len(msgs) == 0 {
+			return nil
+		}
+
 		err := w.writeMsgs(ctx, msgs)
 		if err != nil {
 			w.logger.Error(ctx, err)
@@ -375,6 +379,9 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 	for {
 		select {
 			case msg := <- w.msgCh:
+				if w.readyStopLoop {
+					continue
+				}
 				err := writeMsgsAsPossible(msg)
 				if err != nil {
 					w.logger.Error(ctx, err)
