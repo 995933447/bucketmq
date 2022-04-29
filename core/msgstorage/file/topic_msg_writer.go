@@ -132,6 +132,7 @@ func (w *topicMsgWriter) setLogger(logger log.Logger) error {
 		return err
 	}
 	w.logger = logger
+	return nil
 }
 
 func (w *topicMsgWriter) checkFilesCorruption(ctx context.Context) (bool, error) {
