@@ -6,6 +6,7 @@ import (
 	"github.com/995933447/bucketmq/core/msgstorage"
 	errdef "github.com/995933447/bucketmqerrdef"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -89,7 +90,7 @@ type topicMsgWriter struct {
 	syncToDiskInterval time.Duration
 	hasFileCorruption bool
 	finishInit bool
-	logger log.Logger
+	logger log.Logger `access:"r"`
 	readyStopLoop bool
 }
 
@@ -119,6 +120,18 @@ func newTopicMsgWriter(
 	}
 
 	return writer, nil
+}
+
+func (w *topicMsgWriter) getLogger() log.Logger {
+	return w.logger
+}
+
+func (w *topicMsgWriter) setLogger(logger log.Logger) error {
+	if logger == nil {
+		err := errdef.NewErr(errdef.ErrCodeArgsInvalid, "expected " + reflect.TypeOf(logger).Name() + ", but nil")
+		return err
+	}
+	w.logger = logger
 }
 
 func (w *topicMsgWriter) checkFilesCorruption(ctx context.Context) (bool, error) {
