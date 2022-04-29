@@ -13,4 +13,5 @@ type Logger interface {
 	Errorf(context.Context, string, ...interface{})
 }
 
+// 等有真正好用的logger再替换
 var DefaultLogger Logger = &NilLogger{}
