@@ -10,33 +10,27 @@ import (
 	"os"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 )
 
 type consumerFilesReadWriter struct {
-	*indexFileReader
+	indexFileReaders []*indexFileReader
 	*dataFileReader
 	*offsetFileReadWriter
 }
 
-type finishedOffsetCollection struct {
+type finishedOffsetSet struct {
 	offsetMap map[uint32]struct{}
-	newOffsetMapLocker sync.Mutex
 }
 
-func (c *finishedOffsetCollection) store(offset uint32) {
+func (c *finishedOffsetSet) put(offset uint32) {
 	if c.offsetMap == nil {
-		c.newOffsetMapLocker.Lock()
-		if c.offsetMap == nil {
-			c.offsetMap = make(map[uint32]struct{})
-		}
-		c.newOffsetMapLocker.Unlock()
+		c.offsetMap = make(map[uint32]struct{})
 	}
 	c.offsetMap[offset] = struct{}{}
 }
 
-func (c *finishedOffsetCollection) exist(offset uint32) bool {
+func (c *finishedOffsetSet) exist(offset uint32) bool {
 	if c.offsetMap == nil {
 		return false
 	}
@@ -53,9 +47,10 @@ type consumerMsgReadWriter struct {
 	minFileSeq uint32
 	maxFileSeq uint32
 	consumingFileSeq uint32
+	finishInitFileSeqInfo bool
 	preloadMsgFileNum uint32
 	hasFileCorruption bool
-	finishedOffsetsOfConsumingFile *finishedOffsetCollection
+	finishedOffsetsOfConsumingFile *finishedOffsetSet
 	logger log.Logger `access:"r"`
 	readyStopLoop bool
 	filesWriter *consumerFilesReadWriter
@@ -66,7 +61,11 @@ type consumerMsgReadWriter struct {
 }
 
 func (rw *consumerMsgReadWriter) init(ctx context.Context) error {
-	if err := rw.calMinOrMaxMsgFileSeq(ctx); err != nil {
+	if err := rw.initMsgFileSeqInfo(ctx); err != nil {
+		rw.logger.Error(ctx, err)
+		return err
+	}
+	if err := rw.initOffsetFileReadWriter(ctx); err != nil {
 		rw.logger.Error(ctx, err)
 		return err
 	}
@@ -79,7 +78,61 @@ func (rw *consumerMsgReadWriter) init(ctx context.Context) error {
 	return nil
 }
 
-func (rw *consumerMsgReadWriter) loadFinishedOffsets(ctx context.Context) error {
+func (rw *consumerMsgReadWriter) initOffsetFileReadWriter(ctx context.Context) error {
+	if !rw.finishInitFileSeqInfo {
+		if err := rw.initMsgFileSeqInfo(ctx); err != nil {
+			rw.logger.Error(ctx, err)
+			return err
+		}
+	}
+
+	offsetFp, err := rw.makeOffsetFp(ctx)
+	if err != nil {
+		rw.logger.Error(ctx, err)
+		return err
+	}
+	fileInfo, err := offsetFp.Stat()
+	if err != nil {
+		rw.logger.Error(ctx, err)
+		return err
+	}
+	fileSize := fileInfo.Size()
+	if fileSize % offsetBufSize > 0 {
+		rw.hasFileCorruption = true
+		err = errdef.FileCorruptionErr
+		rw.logger.Error(ctx, err)
+		return err
+	}
+
+	if rw.filesWriter == nil {
+		rw.filesWriter = &consumerFilesReadWriter{}
+	}
+	if rw.filesWriter.offsetFileReadWriter == nil {
+		rw.filesWriter.offsetFileReadWriter = &offsetFileReadWriter{}
+	}
+	rw.filesWriter.offsetFileReadWriter.fp = offsetFp
+	return nil
+}
+
+func (rw *consumerMsgReadWriter) initMsgFileSeqInfo(ctx context.Context) error {
+	if rw.finishInitFileSeqInfo {
+		return nil
+	}
+
+	if err := rw.calMinOrMaxMsgFileSeq(ctx); err != nil {
+		rw.logger.Error(ctx, err)
+		return err
+	}
+	if err := rw.sureConsumingMsgFileSeq(ctx); err != nil {
+		rw.logger.Error(ctx, err)
+		return err
+	}
+
+	rw.finishInitFileSeqInfo = true
+	return nil
+}
+
+func (rw *consumerMsgReadWriter) sureConsumingMsgFileSeq(ctx context.Context) error {
 	if err := fileutil.MkdirIfNotExist(ctx, rw.offsetDir); err != nil {
 		rw.logger.Error(ctx, err)
 		return err
@@ -104,28 +157,24 @@ func (rw *consumerMsgReadWriter) loadFinishedOffsets(ctx context.Context) error 
 	}
 	rw.consumingFileSeq = maxFileSeq
 
-	offsetFp, err := rw.makeOffsetFp(ctx)
-	if err != nil {
-		rw.logger.Error(ctx, err)
-		return err
-	}
-	fileInfo, err := offsetFp.Stat()
-	if err != nil {
-		rw.logger.Error(ctx, err)
-		return err
-	}
-	fileSize := fileInfo.Size()
-	if fileSize % offsetBufSize > 0 {
-		rw.hasFileCorruption = true
-		err = errdef.FileCorruptionErr
-		rw.logger.Error(ctx, err)
-		return err
+	return nil
+}
+
+func (rw *consumerMsgReadWriter) loadFinishedOffsets(ctx context.Context) error {
+	if rw.filesWriter == nil || rw.filesWriter.offsetFileReadWriter == nil {
+		if err := rw.initOffsetFileReadWriter(ctx); err != nil {
+			rw.logger.Error(ctx, err)
+			return err
+		}
 	}
 
-	var offsetsBuf []byte
+	var (
+		offsetFp =  rw.filesWriter.offsetFileReadWriter.fp
+		offsetsBuf []byte
+	)
 	for {
 		buf := make([]byte, 10240 * offsetBufSize)
-		_, err = offsetFp.Read(buf)
+		_, err := offsetFp.Read(buf)
 		if err != nil {
 			if err != io.EOF {
 				break
@@ -140,7 +189,7 @@ func (rw *consumerMsgReadWriter) loadFinishedOffsets(ctx context.Context) error 
 
 	if len(offsetsBuf) % offsetBufSize > 0 {
 		rw.hasFileCorruption = true
-		err = errdef.FileCorruptionErr
+		err := errdef.FileCorruptionErr
 		rw.logger.Error(ctx, err)
 		return err
 	}
@@ -151,16 +200,8 @@ func (rw *consumerMsgReadWriter) loadFinishedOffsets(ctx context.Context) error 
 		return err
 	}
 	for _, offset := range offsets {
-		rw.finishedOffsetsOfConsumingFile.store(offset)
+		rw.finishedOffsetsOfConsumingFile.put(offset)
 	}
-
-	if rw.filesWriter == nil {
-		rw.filesWriter = &consumerFilesReadWriter{}
-	}
-	if rw.filesWriter.offsetFileReadWriter == nil {
-		rw.filesWriter.offsetFileReadWriter = &offsetFileReadWriter{}
-	}
-	rw.filesWriter.offsetFileReadWriter.fp = offsetFp
 
 	return nil
 }
