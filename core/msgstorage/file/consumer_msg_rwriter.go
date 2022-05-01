@@ -3,38 +3,66 @@ package file
 import (
 	"context"
 	"github.com/995933447/bucketmq/core/log"
+	"github.com/995933447/bucketmq/utils/fileutil"
 	errdef "github.com/995933447/bucketmqerrdef"
+	"io"
 	"io/ioutil"
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
 type consumerFilesReadWriter struct {
 	*indexFileReader
 	*dataFileReader
-	*finishOffsetFileReadWriter
+	*offsetFileReadWriter
+}
+
+type finishedOffsetCollection struct {
+	offsetMap map[uint32]struct{}
+	newOffsetMapLocker sync.Mutex
+}
+
+func (c *finishedOffsetCollection) store(offset uint32) {
+	if c.offsetMap == nil {
+		c.newOffsetMapLocker.Lock()
+		if c.offsetMap == nil {
+			c.offsetMap = make(map[uint32]struct{})
+		}
+		c.newOffsetMapLocker.Unlock()
+	}
+	c.offsetMap[offset] = struct{}{}
+}
+
+func (c *finishedOffsetCollection) exist(offset uint32) bool {
+	if c.offsetMap == nil {
+		return false
+	}
+	_, ok := c.offsetMap[offset]
+	return ok
 }
 
 type consumerMsgReadWriter struct {
 	indexDir string
 	dataDir string
-	finishOffsetDir string
+	offsetDir string
 	topicName string
 	consumerName string
 	minFileSeq uint32
 	maxFileSeq uint32
 	consumingFileSeq uint32
 	preloadMsgFileNum uint32
+	hasFileCorruption bool
+	finishedOffsetsOfConsumingFile *finishedOffsetCollection
+	logger log.Logger `access:"r"`
+	readyStopLoop bool
 	filesWriter *consumerFilesReadWriter
 	stopLoopCh chan struct{}
 	notifyNewFilesOpenedCh chan *NewFilesOpenedSignal
 	syncToDiskInterval time.Duration
-	hasFileCorruption bool
 	finishInit bool
-	logger log.Logger `access:"r"`
-	readyStopLoop bool
 }
 
 func (rw *consumerMsgReadWriter) init(ctx context.Context) error {
@@ -42,30 +70,119 @@ func (rw *consumerMsgReadWriter) init(ctx context.Context) error {
 		rw.logger.Error(ctx, err)
 		return err
 	}
+	if err := rw.loadFinishedOffsets(ctx); err != nil {
+		rw.logger.Error(ctx, err)
+		return err
+	}
+	// TODO
+
 	return nil
 }
 
-func (rw *consumerMsgReadWriter) loadFinishedIndexes() error {
-	return nil
-}
+func (rw *consumerMsgReadWriter) loadFinishedOffsets(ctx context.Context) error {
+	if err := fileutil.MkdirIfNotExist(ctx, rw.offsetDir); err != nil {
+		rw.logger.Error(ctx, err)
+		return err
+	}
 
-func (rw *consumerMsgReadWriter) calMinOrMaxMsgFileSeq(ctx context.Context) error {
-	dirInfo, err := os.Stat(rw.indexDir)
+	files, err := ioutil.ReadDir(rw.offsetDir)
 	if err != nil {
 		rw.logger.Error(ctx, err)
 		return err
 	}
-	if os.IsNotExist(err) {
-		if err = os.MkdirAll(rw.indexDir, os.FileMode(0755)); err != nil {
+
+	var maxFileSeq uint32
+	for _, file := range files {
+		seq, err := fileutil.ParseFileSeqBeforeSuffix(file.Name(), offsetFileSuffixName)
+		if err != nil {
 			rw.logger.Error(ctx, err)
 			return err
 		}
+		if maxFileSeq == 0 || maxFileSeq < seq {
+			maxFileSeq = seq
+		}
 	}
-	if !dirInfo.IsDir() {
-		err = errdef.FileIsNotDirErr
+	rw.consumingFileSeq = maxFileSeq
+
+	offsetFp, err := rw.makeOffsetFp(ctx)
+	if err != nil {
 		rw.logger.Error(ctx, err)
 		return err
 	}
+	fileInfo, err := offsetFp.Stat()
+	if err != nil {
+		rw.logger.Error(ctx, err)
+		return err
+	}
+	fileSize := fileInfo.Size()
+	if fileSize % offsetBufSize > 0 {
+		rw.hasFileCorruption = true
+		err = errdef.FileCorruptionErr
+		rw.logger.Error(ctx, err)
+		return err
+	}
+
+	var offsetsBuf []byte
+	for {
+		buf := make([]byte, 10240 * offsetBufSize)
+		_, err = offsetFp.Read(buf)
+		if err != nil {
+			if err != io.EOF {
+				break
+			}
+
+			rw.logger.Error(ctx, err)
+			return err
+		}
+
+		offsetsBuf = append(offsetsBuf, buf...)
+	}
+
+	if len(offsetsBuf) % offsetBufSize > 0 {
+		rw.hasFileCorruption = true
+		err = errdef.FileCorruptionErr
+		rw.logger.Error(ctx, err)
+		return err
+	}
+
+	offsets, err := getDefaultMsgEncoder().decodeOffsets(offsetsBuf)
+	if err != nil {
+		rw.logger.Error(ctx, err)
+		return err
+	}
+	for _, offset := range offsets {
+		rw.finishedOffsetsOfConsumingFile.store(offset)
+	}
+
+	if rw.filesWriter == nil {
+		rw.filesWriter = &consumerFilesReadWriter{}
+	}
+	if rw.filesWriter.offsetFileReadWriter == nil {
+		rw.filesWriter.offsetFileReadWriter = &offsetFileReadWriter{}
+	}
+	rw.filesWriter.offsetFileReadWriter.fp = offsetFp
+
+	return nil
+}
+
+func (rw *consumerMsgReadWriter) makeOffsetFp(ctx context.Context) (*os.File, error) {
+	fileSeqStr := strconv.FormatUint(uint64(rw.consumingFileSeq), 10)
+	finishOffsetFileName := strings.TrimRight(rw.offsetDir, "/") +
+		"/" + rw.topicName + "." + rw.consumerName + "." + fileSeqStr + "." + offsetFileSuffixName
+	fileFp, err := os.OpenFile(finishOffsetFileName, os.O_RDWR|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
+	if err != nil {
+		rw.logger.Error(ctx, err)
+		return nil, err
+	}
+	return fileFp, nil
+}
+
+func (rw *consumerMsgReadWriter) calMinOrMaxMsgFileSeq(ctx context.Context) error {
+	if err := fileutil.MkdirIfNotExist(ctx, rw.dataDir); err != nil {
+		rw.logger.Error(ctx, err)
+		return err
+	}
+
 	files, err := ioutil.ReadDir(rw.indexDir)
 	if err != nil {
 		rw.logger.Error(ctx, err)
@@ -74,26 +191,11 @@ func (rw *consumerMsgReadWriter) calMinOrMaxMsgFileSeq(ctx context.Context) erro
 
 	var minFileSeq, maxFileSeq uint32
 	for _, file := range files {
-		fileName := file.Name()
-		suffixPos := strings.LastIndex(fileName, ".")
-		if suffixPos == -1 {
-			continue
-		}
-		if suffixName := fileName[suffixPos + 1:]; suffixName != indexFileSuffixName {
-			continue
-		}
-		seqPos := strings.LastIndex(fileName[:suffixPos], ".")
-		if suffixPos == -1 {
-			continue
-		}
-		seqStr := fileName[seqPos + 1:suffixPos]
-		seqForUnit64, err := strconv.ParseUint(seqStr, 10, 32)
+		seq, err := fileutil.ParseFileSeqBeforeSuffix(file.Name(), indexFileSuffixName)
 		if err != nil {
 			rw.logger.Error(ctx, err)
 			return err
 		}
-		seq := uint32(seqForUnit64)
-		
 		if minFileSeq == 0 || minFileSeq > seq {
 			minFileSeq = seq
 		}

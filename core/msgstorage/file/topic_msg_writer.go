@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/995933447/bucketmq/core/log"
 	"github.com/995933447/bucketmq/core/msgstorage"
+	"github.com/995933447/bucketmq/utils/fileutil"
 	errdef "github.com/995933447/bucketmqerrdef"
 	"os"
 	"reflect"
@@ -144,18 +145,7 @@ func (w *topicMsgWriter) checkFilesCorruption(ctx context.Context) (bool, error)
 }
 
 func (w *topicMsgWriter) makeIndexFp(ctx context.Context) (*os.File, error) {
-	dirInfo, err := os.Stat(w.indexDir)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			w.logger.Error(ctx, err)
-			return nil, err
-		}
-		if err = os.MkdirAll(w.indexDir, os.FileMode(0755)); err != nil {
-			return nil, err
-		}
-	}
-	if !dirInfo.IsDir() {
-		err = errdef.FileIsNotDirErr
+	if err := fileutil.MkdirIfNotExist(ctx, w.indexDir); err != nil {
 		w.logger.Error(ctx, err)
 		return nil, err
 	}
@@ -170,18 +160,7 @@ func (w *topicMsgWriter) makeIndexFp(ctx context.Context) (*os.File, error) {
 }
 
 func (w *topicMsgWriter) makeDataFp(ctx context.Context) (*os.File, error) {
-	dirInfo, err := os.Stat(w.dataDir)
-	if err != nil {
-		if !os.IsNotExist(err) {
-			w.logger.Error(ctx, err)
-			return nil, err
-		}
-		if err = os.MkdirAll(w.dataDir, os.FileMode(0755)); err != nil {
-			return nil, err
-		}
-	}
-	if !dirInfo.IsDir() {
-		err = errdef.FileIsNotDirErr
+	if err := fileutil.MkdirIfNotExist(ctx, w.dataDir); err != nil {
 		w.logger.Error(ctx, err)
 		return nil, err
 	}

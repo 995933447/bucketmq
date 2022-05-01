@@ -18,6 +18,7 @@ const (
 	//	+ DelaySeconds(4 bytes) + MaxExecTimeLong(4 bytes) + MaxRetryCnt(4 bytes) + ExpireAt(4 bytes)
 	//	+ DataLen(4 bytes) + MsgIdLen(4 bytes) + bufBoundarySize(2 bytes) = 34 bytes
 	indexBufSize = 68
+	offsetBufSize = 4
 )
 
 var (
@@ -95,4 +96,14 @@ func (e *MsgEncoder) encodeBuf(msgs []*msgstorage.Message) (indexesBuf []byte, d
 	dataBuf = e.dataBuf[:dataBufSizeBytes]
 
 	return
+}
+
+func (e *MsgEncoder) decodeOffsets(buf []byte) ([]uint32, error) {
+	offsetNum := len(buf) / offsetBufSize
+	offsets := make([]uint32, 0, offsetNum)
+	endian := binary.LittleEndian
+	for i := 0; i < len(buf); i += 4 {
+		offsets = append(offsets, endian.Uint32(buf[i:i + offsetBufSize]))
+	}
+	return offsets, nil
 }

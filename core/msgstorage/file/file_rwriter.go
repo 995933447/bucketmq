@@ -5,7 +5,7 @@ import "os"
 const (
 	indexFileSuffixName = "idx"
 	dataFileSuffixName = "dat"
-	finishOffsetFileSuffixName = "offset"
+	offsetFileSuffixName = "offset"
 )
 
 type indexFileWriter struct {
@@ -28,6 +28,6 @@ type dataFileReader struct {
 	fp *os.File
 }
 
-type finishOffsetFileReadWriter struct {
+type offsetFileReadWriter struct {
 	fp *os.File
 }
