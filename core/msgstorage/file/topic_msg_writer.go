@@ -17,13 +17,13 @@ const (
 	defaultSyncToDiskInterval = time.Second * 5
 )
 
-type topicFilesWriter struct {
+type topicFileWritersWrapper struct {
 	*indexFileWriter
 	*dataFileWriter
 	logger log.Logger
 }
 
-func (fw *topicFilesWriter) syncToDisk(ctx context.Context) error {
+func (fw *topicFileWritersWrapper) syncToDisk(ctx context.Context) error {
 	if err := fw.indexFileWriter.fp.Sync(); err != nil {
 		fw.logger.Error(ctx, err)
 		return err
@@ -34,7 +34,7 @@ func (fw *topicFilesWriter) syncToDisk(ctx context.Context) error {
 	return nil
 }
 
-func (fw *topicFilesWriter) checkFilesCorruption(ctx context.Context) (bool, error) {
+func (fw *topicFileWritersWrapper) checkFilesCorruption(ctx context.Context) (bool, error) {
 	indexFileInfo, err := fw.indexFileWriter.fp.Stat()
 	if err != nil {
 		fw.logger.Error(ctx, err)
@@ -76,7 +76,7 @@ type topicMsgWriter struct {
 	// 消息文件序列号
 	fileSeq uint32
 	// 消息文件写入处理器
-	filesWriter *topicFilesWriter
+	fileWritersWrapper *topicFileWritersWrapper
 	//　消息文件是否被污染
 	hasFileCorruption bool
 	//　进入准备停止事件循环状态,不再写入消息
@@ -138,14 +138,14 @@ func (w *topicMsgWriter) setLogger(logger log.Logger) error {
 
 func (w *topicMsgWriter) checkFilesCorruption(ctx context.Context) (bool, error) {
 	var err error
-	if w.hasFileCorruption, err = w.filesWriter.checkFilesCorruption(ctx); err != nil {
+	if w.hasFileCorruption, err = w.fileWritersWrapper.checkFilesCorruption(ctx); err != nil {
 		return false, err
 	}
 	return w.hasFileCorruption, nil
 }
 
 func (w *topicMsgWriter) makeIndexFp(ctx context.Context) (*os.File, error) {
-	if err := fileutil.MkdirIfNotExist(ctx, w.indexDir); err != nil {
+	if err := fileutil.MkdirIfNotExist(w.indexDir); err != nil {
 		w.logger.Error(ctx, err)
 		return nil, err
 	}
@@ -160,7 +160,7 @@ func (w *topicMsgWriter) makeIndexFp(ctx context.Context) (*os.File, error) {
 }
 
 func (w *topicMsgWriter) makeDataFp(ctx context.Context) (*os.File, error) {
-	if err := fileutil.MkdirIfNotExist(ctx, w.dataDir); err != nil {
+	if err := fileutil.MkdirIfNotExist(w.dataDir); err != nil {
 		w.logger.Error(ctx, err)
 		return nil, err
 	}
@@ -189,7 +189,7 @@ func (w *topicMsgWriter) init(ctx context.Context, maxWritableMsgNum, maxWritabl
 		return err
 	}
 
-	w.filesWriter = &topicFilesWriter{
+	w.fileWritersWrapper = &topicFileWritersWrapper{
 		dataFileWriter: &dataFileWriter{
 			maxWritableDataBytes: maxWritableMsgBytes,
 			fp: dataFp,
@@ -228,13 +228,13 @@ func (w *topicMsgWriter) openNewMsgFiles(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	w.filesWriter = &topicFilesWriter{
+	w.fileWritersWrapper = &topicFileWritersWrapper{
 		dataFileWriter: &dataFileWriter{
-			maxWritableDataBytes: w.filesWriter.dataFileWriter.maxWritableDataBytes,
+			maxWritableDataBytes: w.fileWritersWrapper.dataFileWriter.maxWritableDataBytes,
 			fp: dataFp,
 		},
 		indexFileWriter: &indexFileWriter{
-			maxWritableIndexNum: w.filesWriter.indexFileWriter.maxWritableIndexNum,
+			maxWritableIndexNum: w.fileWritersWrapper.indexFileWriter.maxWritableIndexNum,
 			fp: indexFp,
 		},
 		logger: w.logger,
@@ -261,8 +261,8 @@ func (w *topicMsgWriter) writeMsgs(ctx context.Context, msgs []*msgstorage.Messa
 
 		for _, msg := range msgs {
 			batchWritableMsgDataBufBytes += getDefaultMsgEncoder().getMsgsDataBufBytes([]*msgstorage.Message{msg})
-			if w.filesWriter.indexFileWriter.writtenIndexNum + uint32(len(batchWritableMsgs)) >= w.filesWriter.indexFileWriter.maxWritableIndexNum ||
-				w.filesWriter.dataFileWriter.writtenDataBytes + batchWritableMsgDataBufBytes >= w.filesWriter.dataFileWriter.maxWritableDataBytes {
+			if w.fileWritersWrapper.indexFileWriter.writtenIndexNum + uint32(len(batchWritableMsgs)) >= w.fileWritersWrapper.indexFileWriter.maxWritableIndexNum ||
+				w.fileWritersWrapper.dataFileWriter.writtenDataBytes + batchWritableMsgDataBufBytes >= w.fileWritersWrapper.dataFileWriter.maxWritableDataBytes {
 				areMsgFilesFull = true
 				break
 			}
@@ -281,7 +281,7 @@ func (w *topicMsgWriter) writeMsgs(ctx context.Context, msgs []*msgstorage.Messa
 				totalWrittenNum int
 			)
 			for {
-				writtenNum, err := w.filesWriter.dataFileWriter.fp.Write(dataBuf)
+				writtenNum, err := w.fileWritersWrapper.dataFileWriter.fp.Write(dataBuf)
 				if err != nil {
 					return err
 				}
@@ -293,11 +293,11 @@ func (w *topicMsgWriter) writeMsgs(ctx context.Context, msgs []*msgstorage.Messa
 
 				dataBuf = dataBuf[writtenNum:]
 			}
-			w.filesWriter.dataFileWriter.writtenDataBytes += uint32(dataBufLen)
+			w.fileWritersWrapper.dataFileWriter.writtenDataBytes += uint32(dataBufLen)
 
 			totalWrittenNum = 0
 			for {
-				writtenNum, err := w.filesWriter.indexFileWriter.fp.Write(indexesBuf)
+				writtenNum, err := w.fileWritersWrapper.indexFileWriter.fp.Write(indexesBuf)
 				if err != nil {
 					return err
 				}
@@ -309,7 +309,7 @@ func (w *topicMsgWriter) writeMsgs(ctx context.Context, msgs []*msgstorage.Messa
 
 				indexesBuf = indexesBuf[writtenNum:]
 			}
-			w.filesWriter.indexFileWriter.writtenIndexNum += uint32(batchWritableMsgNum)
+			w.fileWritersWrapper.indexFileWriter.writtenIndexNum += uint32(batchWritableMsgNum)
 
 			if len(msgs) <= batchWritableMsgNum {
 				msgs = nil
@@ -387,7 +387,7 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 					w.logger.Error(ctx, errdef.FileCorruptionErr)
 					return errdef.FileCorruptionErr
 				} else {
-					_ =	w.filesWriter.syncToDisk(ctx)
+					_ =	w.fileWritersWrapper.syncToDisk(ctx)
 				}
 			case <- w.stopLoopCh:
 				w.readyStopLoop = true

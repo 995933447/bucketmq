@@ -1,12 +1,11 @@
 package fileutil
 
 import (
-	"context"
 	errdef "github.com/995933447/bucketmqerrdef"
 	"os"
 )
 
-func MkdirIfNotExist(ctx context.Context, dirName string) error {
+func MkdirIfNotExist(dirName string) error {
 	dirInfo, err := os.Stat(dirName)
 	if err != nil {
 		return err
