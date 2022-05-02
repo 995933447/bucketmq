@@ -50,7 +50,7 @@ func (rw *consumerMsgReadWriter) init(ctx context.Context) error {
 	}
 
 	rw.msgEncoder = &msgEncoder{}
-
+	rw.finishedOffsetsOfConsumingFile = &structs.Uint32Set{}
 	if err := rw.openAndPreloadMsgFiles(ctx); err != nil {
 		rw.logger.Error(ctx, err)
 		return err
