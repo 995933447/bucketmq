@@ -35,6 +35,7 @@ type consumerMsgReadWriter struct {
 	finishedOffsetsOfConsumingFile *structs.Uint32Set
 	hasFileCorruption bool
 	syncToDiskInterval time.Duration
+	*msgEncoder
 	logger log.Logger `access:"r"`
 	readyStopLoop bool
 	stopLoopEventCh chan struct{}
@@ -47,10 +48,14 @@ func (rw *consumerMsgReadWriter) init(ctx context.Context) error {
 		rw.logger.Error(ctx, err)
 		return err
 	}
+
+	rw.msgEncoder = &msgEncoder{}
+
 	if err := rw.openAndPreloadMsgFiles(ctx); err != nil {
 		rw.logger.Error(ctx, err)
 		return err
 	}
+
 	return nil
 }
 
@@ -59,22 +64,27 @@ func (rw *consumerMsgReadWriter) openAndPreloadMsgFiles(ctx context.Context) err
 		rw.logger.Error(ctx, err)
 		return err
 	}
+
 	if err := rw.initIndexFileReaders(ctx); err != nil {
 		rw.logger.Error(ctx, err)
 		return err
 	}
+
 	if err := rw.initDataFileReader(ctx); err != nil {
 		rw.logger.Error(ctx, err)
 		return err
 	}
+
 	if err := rw.loadFinishedOffsets(ctx); err != nil {
 		rw.logger.Error(ctx, err)
 		return err
 	}
+
 	if err := rw.loadIndexes(ctx); err != nil {
 		rw.logger.Error(ctx, err)
 		return err
 	}
+
 	return nil
 }
 
@@ -198,6 +208,7 @@ func (rw *consumerMsgReadWriter) calMsgFileSeqInfo(ctx context.Context) error {
 		rw.logger.Error(ctx, err)
 		return err
 	}
+
 	if err := rw.sureConsumingMsgFileSeq(ctx); err != nil {
 		rw.logger.Error(ctx, err)
 		return err
@@ -324,7 +335,11 @@ func (rw *consumerMsgReadWriter) loadFinishedOffsets(ctx context.Context) error 
 		return err
 	}
 
-	offsets, err := getDefaultMsgEncoder().decodeOffsets(offsetsBuf)
+	if rw.msgEncoder == nil {
+		rw.msgEncoder = &msgEncoder{}
+	}
+
+	offsets, err := rw.msgEncoder.decodeOffsets(offsetsBuf)
 	if err != nil {
 		rw.logger.Error(ctx, err)
 		return err

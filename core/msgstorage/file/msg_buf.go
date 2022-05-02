@@ -3,7 +3,6 @@ package file
 import (
 	"encoding/binary"
 	"github.com/995933447/bucketmq/core/msgstorage"
-	"sync"
 )
 
 const (
@@ -21,29 +20,12 @@ const (
 	offsetBufSize = 4
 )
 
-var (
-	newDefaultMsgEncoderLocker sync.Mutex
-	defaultMsgEncoder *MsgEncoder
-)
-
-type MsgEncoder struct {
+type msgEncoder struct {
 	indexesBuf []byte
 	dataBuf []byte
 }
 
-func getDefaultMsgEncoder() *MsgEncoder {
-	if defaultMsgEncoder == nil {
-		newDefaultMsgEncoderLocker.Lock()
-		if defaultMsgEncoder == nil {
-			defaultMsgEncoder = &MsgEncoder{}
-		}
-		newDefaultMsgEncoderLocker.Unlock()
-	}
-
-	return defaultMsgEncoder
-}
-
-func (e *MsgEncoder) getMsgsDataBufBytes(msgs []*msgstorage.Message) uint32 {
+func (e *msgEncoder) getMsgsDataBufBytes(msgs []*msgstorage.Message) uint32 {
 	var totalBytes uint32
 	for _, msg := range msgs {
 		totalBytes =+ uint32(len(msg.GetDataPayload().GetData())) + bufBoundarySize
@@ -51,7 +33,7 @@ func (e *MsgEncoder) getMsgsDataBufBytes(msgs []*msgstorage.Message) uint32 {
 	return totalBytes
 }
 
-func (e *MsgEncoder) encodeBuf(msgs []*msgstorage.Message) (indexesBuf []byte, dataBuf []byte) {
+func (e *msgEncoder) encodeBuf(msgs []*msgstorage.Message) (indexesBuf []byte, dataBuf []byte) {
 	indexesBufBytes := len(msgs) * indexBufSize
 	dataBufSizeBytes := e.getMsgsDataBufBytes(msgs)
 	if indexesBufBytes > cap(e.indexesBuf) {
@@ -98,7 +80,7 @@ func (e *MsgEncoder) encodeBuf(msgs []*msgstorage.Message) (indexesBuf []byte, d
 	return
 }
 
-func (e *MsgEncoder) decodeOffsets(buf []byte) ([]uint32, error) {
+func (e *msgEncoder) decodeOffsets(buf []byte) ([]uint32, error) {
 	offsetNum := len(buf) / offsetBufSize
 	offsets := make([]uint32, 0, offsetNum)
 	endian := binary.LittleEndian

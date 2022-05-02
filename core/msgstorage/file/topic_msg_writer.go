@@ -71,6 +71,10 @@ type topicMsgWriter struct {
 	fileWritersWrapper *topicFileWritersWrapper
 	//　消息文件是否被污染
 	hasFileCorruption bool
+	// 定时冲刷磁盘的时间间隔
+	syncToDiskInterval time.Duration
+	// 消息编码器
+	*msgEncoder
 	//　进入准备停止事件循环状态,不再写入消息
 	readyStopLoop bool
 	//　日志组件
@@ -81,8 +85,6 @@ type topicMsgWriter struct {
 	stopLoopEventCh chan struct{}
 	//　发送有新的写入文件被打开的通知的chan
 	newFilesOpenEventCh chan *newFilesOpenEvent
-	// 定时冲刷磁盘的时间间隔
-	syncToDiskInterval time.Duration
 	//　是否已经完成初始化
 	finishInit bool
 }
@@ -209,6 +211,7 @@ func (w *topicMsgWriter) init(ctx context.Context, maxWritableMsgNum, maxWritabl
 		return errdef.FileCorruptionErr
 	}
 
+	w.msgEncoder = &msgEncoder{}
 	w.msgCh = make(chan *msgstorage.Message, 10000)
 	w.stopLoopEventCh = make(chan struct{})
 	w.newFilesOpenEventCh = make(chan *newFilesOpenEvent)
@@ -261,7 +264,7 @@ func (w *topicMsgWriter) writeMsgs(ctx context.Context, msgs []*msgstorage.Messa
 		)
 
 		for _, msg := range msgs {
-			batchWritableMsgDataBufBytes += getDefaultMsgEncoder().getMsgsDataBufBytes([]*msgstorage.Message{msg})
+			batchWritableMsgDataBufBytes += w.msgEncoder.getMsgsDataBufBytes([]*msgstorage.Message{msg})
 			if w.fileWritersWrapper.indexFileWriter.writtenIndexNum + uint32(len(batchWritableMsgs)) >= w.fileWritersWrapper.indexFileWriter.maxWritableIndexNum ||
 				w.fileWritersWrapper.dataFileWriter.writtenDataBytes + batchWritableMsgDataBufBytes >= w.fileWritersWrapper.dataFileWriter.maxWritableDataBytes {
 				areMsgFilesFull = true
@@ -274,7 +277,7 @@ func (w *topicMsgWriter) writeMsgs(ctx context.Context, msgs []*msgstorage.Messa
 		batchWritableMsgNum := len(batchWritableMsgs)
 
 		if batchWritableMsgNum > 0 {
-			indexesBuf, dataBuf := getDefaultMsgEncoder().encodeBuf(msgs)
+			indexesBuf, dataBuf := w.msgEncoder.encodeBuf(msgs)
 
 			var(
 				dataBufLen = len(dataBuf)
