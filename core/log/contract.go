@@ -3,15 +3,14 @@ package log
 import "context"
 
 type Logger interface {
-	Info(context.Context, string)
-	Infof(context.Context, string, ...interface{})
-	Debug(context.Context, string)
-	Debugf(context.Context, string, ...interface{})
-	Warn(context.Context, string)
-	Warnf(context.Context, string, ...interface{})
+	Info(context.Context, interface{})
+	Infof(context.Context, interface{}, ...interface{})
+	Debug(context.Context, interface{})
+	Debugf(context.Context, interface{}, ...interface{})
+	Warn(context.Context, interface{})
+	Warnf(context.Context, interface{}, ...interface{})
 	Error(context.Context, interface{})
-	Errorf(context.Context, string, ...interface{})
+	Errorf(context.Context, interface{}, ...interface{})
 }
 
-// 等有真正好用的logger再替换
-var DefaultLogger Logger = &NilLogger{}
+var DefaultLogger Logger = &EmptyLogger{}

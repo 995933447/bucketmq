@@ -388,7 +388,8 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 					w.logger.Error(ctx, errdef.FileCorruptionErr)
 					return errdef.FileCorruptionErr
 				} else {
-					_ =	w.fileWritersWrapper.syncToDisk(ctx)
+					err = w.fileWritersWrapper.syncToDisk(ctx)
+					w.logger.Warn(ctx, err.Error())
 				}
 			case <- w.stopLoopEventCh:
 				w.readyStopLoop = true

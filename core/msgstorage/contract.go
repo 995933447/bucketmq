@@ -2,7 +2,7 @@ package msgstorage
 
 import (
 	"context"
-	"github.com/995933447/bucketmq/utils/uniqid"
+	"github.com/995933447/bucketmq/core/utils/uniqid"
 )
 
 type MsgMetadata struct {
@@ -137,7 +137,7 @@ type MsgStorage interface {
 	// PushMsg 写入消息
 	PushMsg(context.Context, *Message) error
 	// PopMsg 弹出消息
-	PopMsg(ctx context.Context) (*Message, error)
+	PopMsg(context.Context) (*Message, error)
 	// SetMsgConsumptionFinished 确认消息消费完成
 	SetMsgConsumptionFinished(ctx context.Context, msgId string) error
 	// SetMsgWillBeRetried 消息重试
