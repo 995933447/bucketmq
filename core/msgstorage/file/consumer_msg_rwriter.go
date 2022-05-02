@@ -30,15 +30,15 @@ type consumerMsgReadWriter struct {
 	maxFileSeq uint32
 	consumingFileSeq uint32
 	finishInitFileSeqInfo bool
+	fileReadWritersWrapper *consumerFileReadWritersWrapper
 	preloadMsgFileNum uint32
-	hasFileCorruption bool
 	finishedOffsetsOfConsumingFile *structs.Uint32Set
+	hasFileCorruption bool
+	syncToDiskInterval time.Duration
 	logger log.Logger `access:"r"`
 	readyStopLoop bool
-	fileReadWritersWrapper *consumerFileReadWritersWrapper
 	stopLoopEventCh chan struct{}
 	newFilesOpenEventCh chan *newFilesOpenEvent
-	syncToDiskInterval time.Duration
 	finishInit bool
 }
 
