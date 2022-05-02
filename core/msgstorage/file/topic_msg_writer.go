@@ -4,7 +4,7 @@ import (
 	"context"
 	"github.com/995933447/bucketmq/core/log"
 	"github.com/995933447/bucketmq/core/msgstorage"
-	"github.com/995933447/bucketmq/utils/fileutil"
+	"github.com/995933447/bucketmq/core/utils/fileutil"
 	errdef "github.com/995933447/bucketmqerrdef"
 	"os"
 	"reflect"
@@ -58,14 +58,6 @@ func (fw *topicFileWritersWrapper) checkFilesCorruption(ctx context.Context) (bo
 	return false, nil
 }
 
-type NewFilesOpenedSignal struct {
-	fileSeq uint32 `access:"r"`
-}
-
-func (s *NewFilesOpenedSignal) getFileSeq() uint32 {
-	return s.fileSeq
-}
-
 type topicMsgWriter struct {
 	// 索引目录
 	indexDir string
@@ -86,9 +78,9 @@ type topicMsgWriter struct {
 	// 接收消息的chan
 	msgCh chan *msgstorage.Message
 	//　接收停止时间循环的信号的chan
-	stopLoopCh chan struct{}
+	stopLoopEventCh chan struct{}
 	//　发送有新的写入文件被打开的通知的chan
-	notifyNewFilesOpenedCh chan *NewFilesOpenedSignal
+	newFilesOpenEventCh chan *newFilesOpenEvent
 	// 定时冲刷磁盘的时间间隔
 	syncToDiskInterval time.Duration
 	//　是否已经完成初始化
@@ -152,11 +144,20 @@ func (w *topicMsgWriter) makeIndexFp(ctx context.Context) (*os.File, error) {
 
 	fileSeqStr := strconv.FormatUint(uint64(w.fileSeq), 10)
 	indexFileName := strings.TrimRight(w.indexDir, "/") + "/" + w.topicName + "." + fileSeqStr + "." + indexFileSuffixName
-	indexFp, err := os.OpenFile(indexFileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
+	fp, err := os.OpenFile(indexFileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
 		return nil, err
 	}
-	return indexFp, nil
+	fileInfo, err := fp.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if fileInfo.IsDir() {
+		err = errdef.FileIsNotRegularFileErr
+		w.logger.Error(ctx, err)
+		return nil, err
+	}
+	return fp, nil
 }
 
 func (w *topicMsgWriter) makeDataFp(ctx context.Context) (*os.File, error) {
@@ -209,8 +210,8 @@ func (w *topicMsgWriter) init(ctx context.Context, maxWritableMsgNum, maxWritabl
 	}
 
 	w.msgCh = make(chan *msgstorage.Message, 10000)
-	w.stopLoopCh = make(chan struct{})
-	w.notifyNewFilesOpenedCh = make(chan *NewFilesOpenedSignal)
+	w.stopLoopEventCh = make(chan struct{})
+	w.newFilesOpenEventCh = make(chan *newFilesOpenEvent)
 	w.finishInit = true
 
 	return nil
@@ -239,7 +240,7 @@ func (w *topicMsgWriter) openNewMsgFiles(ctx context.Context) error {
 		},
 		logger: w.logger,
 	}
-	w.notifyNewFilesOpenedCh <- &NewFilesOpenedSignal{
+	w.newFilesOpenEventCh <- &newFilesOpenEvent{
 		fileSeq: w.fileSeq,
 	}
 	
@@ -389,7 +390,7 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 				} else {
 					_ =	w.fileWritersWrapper.syncToDisk(ctx)
 				}
-			case <- w.stopLoopCh:
+			case <- w.stopLoopEventCh:
 				w.readyStopLoop = true
 				err := writeMsgsAsPossible(nil)
 				if err != nil {
