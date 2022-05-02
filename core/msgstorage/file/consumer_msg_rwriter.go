@@ -49,8 +49,6 @@ func (rw *consumerMsgReadWriter) init(ctx context.Context) error {
 		return err
 	}
 
-	rw.msgEncoder = &msgEncoder{}
-	rw.finishedOffsetsOfConsumingFile = &structs.Uint32Set{}
 	if err := rw.openAndPreloadMsgFiles(ctx); err != nil {
 		rw.logger.Error(ctx, err)
 		return err
@@ -338,12 +336,12 @@ func (rw *consumerMsgReadWriter) loadFinishedOffsets(ctx context.Context) error 
 	if rw.msgEncoder == nil {
 		rw.msgEncoder = &msgEncoder{}
 	}
-
 	offsets, err := rw.msgEncoder.decodeOffsets(offsetsBuf)
 	if err != nil {
 		rw.logger.Error(ctx, err)
 		return err
 	}
+
 	if rw.finishedOffsetsOfConsumingFile == nil {
 		rw.finishedOffsetsOfConsumingFile = &structs.Uint32Set{}
 	}
