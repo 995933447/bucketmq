@@ -4,6 +4,7 @@ import (
 	"context"
 	"github.com/995933447/bucketmq/core/log"
 	"github.com/995933447/bucketmq/core/utils/fileutil"
+	"github.com/995933447/bucketmq/core/utils/structs"
 	errdef "github.com/995933447/bucketmqerrdef"
 	"io"
 	"io/ioutil"
@@ -19,25 +20,6 @@ type consumerFileReadWritersWrapper struct {
 	*offsetFileReadWriter
 }
 
-type finishedOffsetSet struct {
-	offsetMap map[uint32]struct{}
-}
-
-func (c *finishedOffsetSet) put(offset uint32) {
-	if c.offsetMap == nil {
-		c.offsetMap = make(map[uint32]struct{})
-	}
-	c.offsetMap[offset] = struct{}{}
-}
-
-func (c *finishedOffsetSet) exist(offset uint32) bool {
-	if c.offsetMap == nil {
-		return false
-	}
-	_, ok := c.offsetMap[offset]
-	return ok
-}
-
 type consumerMsgReadWriter struct {
 	topicName string
 	consumerName string
@@ -50,7 +32,7 @@ type consumerMsgReadWriter struct {
 	finishInitFileSeqInfo bool
 	preloadMsgFileNum uint32
 	hasFileCorruption bool
-	finishedOffsetsOfConsumingFile *finishedOffsetSet
+	finishedOffsetsOfConsumingFile *structs.Uint32Set
 	logger log.Logger `access:"r"`
 	readyStopLoop bool
 	fileReadWritersWrapper *consumerFileReadWritersWrapper
@@ -348,10 +330,10 @@ func (rw *consumerMsgReadWriter) loadFinishedOffsets(ctx context.Context) error 
 		return err
 	}
 	if rw.finishedOffsetsOfConsumingFile == nil {
-		rw.finishedOffsetsOfConsumingFile = &finishedOffsetSet{}
+		rw.finishedOffsetsOfConsumingFile = &structs.Uint32Set{}
 	}
 	for _, offset := range offsets {
-		rw.finishedOffsetsOfConsumingFile.put(offset)
+		rw.finishedOffsetsOfConsumingFile.Put(offset)
 	}
 
 	return nil
