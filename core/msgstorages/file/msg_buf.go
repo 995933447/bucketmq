@@ -2,7 +2,7 @@ package file
 
 import (
 	"encoding/binary"
-	"github.com/995933447/bucketmq/core/msgstorage"
+	"github.com/995933447/bucketmq/core/msgstorages"
 )
 
 const (
@@ -25,21 +25,21 @@ type msgEncoder struct {
 	dataBuf []byte
 }
 
-func (e *msgEncoder) getMsgsDataBufBytes(msgs []*msgstorage.Message) uint32 {
+func (e *msgEncoder) getMsgsDataBufBytes(msgs []*msgstorages.Message) uint32 {
 	var totalBytes uint32
 	for _, msg := range msgs {
-		totalBytes =+ uint32(len(msg.GetDataPayload().GetData())) + bufBoundarySize
+		totalBytes += uint32(len(msg.GetDataPayload().GetData())) + bufBoundarySize
 	}
 	return totalBytes
 }
 
-func (e *msgEncoder) encodeBuf(msgs []*msgstorage.Message) (indexesBuf []byte, dataBuf []byte) {
+func (e *msgEncoder) encodeBuf(msgs []*msgstorages.Message) (indexesBuf []byte, dataBuf []byte) {
 	indexesBufBytes := len(msgs) * indexBufSize
 	dataBufSizeBytes := e.getMsgsDataBufBytes(msgs)
-	if indexesBufBytes > cap(e.indexesBuf) {
+	if indexesBufBytes > len(e.indexesBuf) {
 		e.indexesBuf = make([]byte, indexesBufBytes)
 	}
-	if dataBufSizeBytes > uint32(cap(e.dataBuf)) {
+	if dataBufSizeBytes > uint32(len(e.dataBuf)) {
 		e.dataBuf = make([]byte, dataBufSizeBytes)
 	}
 
@@ -71,7 +71,7 @@ func (e *msgEncoder) encodeBuf(msgs []*msgstorage.Message) (indexesBuf []byte, d
 		writableDataBuf[0] = bufBeginBoundary
 		copy(writableDataBuf[1:], dataPayload.GetData())
 		writableDataBuf[dataLen + 1] = bufEndBoundary
-		writtenDataBufLen += e.getMsgsDataBufBytes([]*msgstorage.Message{msg})
+		writtenDataBufLen += e.getMsgsDataBufBytes([]*msgstorages.Message{msg})
 	}
 
 	indexesBuf = e.indexesBuf[:indexesBufBytes]

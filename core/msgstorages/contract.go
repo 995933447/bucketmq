@@ -1,4 +1,4 @@
-package msgstorage
+package msgstorages
 
 import (
 	"context"

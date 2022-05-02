@@ -9,7 +9,7 @@ import (
 )
 
 func TestPrintMsg (t *testing.T) {
-	fmt.Printf("%+v", &msgstorage.Message{})
+	fmt.Printf("%+v", &msgstorages.Message{})
 }
 
 func TestSetBuf (t *testing.T) {

@@ -26,10 +26,10 @@ type consumerMsgReadWriter struct {
 	indexDir string
 	dataDir string
 	offsetDir string
-	minFileSeq uint32
 	maxFileSeq uint32
+	confirmMaxFileSeq bool
 	consumingFileSeq uint32
-	finishInitFileSeqInfo bool
+	confirmConsumingFileSeq bool
 	fileReadWritersWrapper *consumerFileReadWritersWrapper
 	preloadMsgFileNum uint32
 	finishedOffsetsOfConsumingFile *structs.Uint32Set
@@ -39,7 +39,7 @@ type consumerMsgReadWriter struct {
 	logger log.Logger `access:"r"`
 	readyStopLoop bool
 	stopLoopEventCh chan struct{}
-	newFilesOpenEventCh chan *newFilesOpenEvent
+	newFilesOpenEventCh chan *nextSeqFilesOpenEvent
 	finishInit bool
 }
 
@@ -87,13 +87,6 @@ func (rw *consumerMsgReadWriter) openAndPreloadMsgFiles(ctx context.Context) err
 }
 
 func (rw *consumerMsgReadWriter) initDataFileReader(ctx context.Context) error {
-	if !rw.finishInitFileSeqInfo {
-		if err := rw.calMsgFileSeqInfo(ctx); err != nil {
-			rw.logger.Error(ctx, err)
-			return err
-		}
-	}
-
 	dataFp, err := rw.makeDataFp(ctx)
 	if err != nil {
 		rw.logger.Error(ctx, err)
@@ -124,12 +117,8 @@ func (rw *consumerMsgReadWriter) initDataFileReader(ctx context.Context) error {
 }
 
 func (rw *consumerMsgReadWriter) initIndexFileReaders(ctx context.Context) error {
-	if !rw.finishInitFileSeqInfo {
-		if err := rw.calMsgFileSeqInfo(ctx); err != nil {
-			rw.logger.Error(ctx, err)
-			return err
-		}
-	}
+	rw.assetConfirmedMaxMsgFileSeq()
+	rw.assetConfirmedConsumingMsgFileSeq()
 
 	if rw.fileReadWritersWrapper == nil {
 		rw.fileReadWritersWrapper = &consumerFileReadWritersWrapper{}
@@ -161,13 +150,6 @@ func (rw *consumerMsgReadWriter) initIndexFileReaders(ctx context.Context) error
 }
 
 func (rw *consumerMsgReadWriter) initOffsetFileReadWriter(ctx context.Context) error {
-	if !rw.finishInitFileSeqInfo {
-		if err := rw.calMsgFileSeqInfo(ctx); err != nil {
-			rw.logger.Error(ctx, err)
-			return err
-		}
-	}
-
 	offsetFp, err := rw.makeOffsetFp(ctx)
 	if err != nil {
 		rw.logger.Error(ctx, err)
@@ -198,11 +180,7 @@ func (rw *consumerMsgReadWriter) initOffsetFileReadWriter(ctx context.Context) e
 }
 
 func (rw *consumerMsgReadWriter) calMsgFileSeqInfo(ctx context.Context) error {
-	if rw.finishInitFileSeqInfo {
-		return nil
-	}
-
-	if err := rw.calMinOrMaxMsgFileSeq(ctx); err != nil {
+	if err := rw.calMaxMsgFileSeq(ctx); err != nil {
 		rw.logger.Error(ctx, err)
 		return err
 	}
@@ -212,11 +190,26 @@ func (rw *consumerMsgReadWriter) calMsgFileSeqInfo(ctx context.Context) error {
 		return err
 	}
 
-	rw.finishInitFileSeqInfo = true
 	return nil
 }
 
+func (rw *consumerMsgReadWriter) assetConfirmedMaxMsgFileSeq() {
+	if rw.confirmMaxFileSeq {
+		return
+	}
+	panic("must call *consumerMsgReadWriter.calMsgFileSeqInfo(context.Context) to set *consumerMsgReadWriter.maxFileSeq first.")
+}
+
+func (rw *consumerMsgReadWriter) assetConfirmedConsumingMsgFileSeq() {
+	if rw.confirmConsumingFileSeq {
+		return
+	}
+	panic("must call *consumerMsgReadWriter.sureConsumingMsgFileSeq(context.Context) to set *consumerMsgReadWriter.maxFileSeq first.")
+}
+
 func (rw *consumerMsgReadWriter) sureConsumingMsgFileSeq(ctx context.Context) error {
+	rw.assetConfirmedMaxMsgFileSeq()
+
 	if err := fileutil.MkdirIfNotExist(rw.offsetDir); err != nil {
 		rw.logger.Error(ctx, err)
 		return err
@@ -246,13 +239,6 @@ func (rw *consumerMsgReadWriter) sureConsumingMsgFileSeq(ctx context.Context) er
 	}
 
 	if maxOffsetFileSeq > 0 {
-		if rw.maxFileSeq == 0 {
-			if err = rw.calMinOrMaxMsgFileSeq(ctx); err != nil {
-				rw.logger.Error(ctx, err)
-				return err
-			}
-		}
-
 		if rw.maxFileSeq > maxOffsetFileSeq {
 			consumingIndexFileInfo, err := os.Stat(rw.buildIndexFileName(maxOffsetFileSeq))
 			if err == nil && !consumingIndexFileInfo.IsDir() {
@@ -353,46 +339,58 @@ func (rw *consumerMsgReadWriter) loadFinishedOffsets(ctx context.Context) error 
 }
 
 func (rw *consumerMsgReadWriter) makeDataFp(ctx context.Context) (*os.File, error) {
-	if err := fileutil.MkdirIfNotExist(rw.dataDir); err != nil {
+	rw.assetConfirmedConsumingMsgFileSeq()
+
+ 	if err := fileutil.MkdirIfNotExist(rw.dataDir); err != nil {
 		rw.logger.Error(ctx, err)
 		return nil, err
 	}
+
 	fp, err := os.OpenFile(rw.buildDataFileName(rw.consumingFileSeq), os.O_RDWR|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
 		rw.logger.Error(ctx, err)
 		return nil, err
 	}
+
 	fileInfo, err := fp.Stat()
 	if err != nil {
 		return nil, err
 	}
+
 	if fileInfo.IsDir() {
 		err = errdef.FileIsNotRegularFileErr
 		rw.logger.Error(ctx, err)
 		return nil, err
 	}
+
 	return fp, nil
 }
 
 func (rw *consumerMsgReadWriter) makeOffsetFp(ctx context.Context) (*os.File, error) {
+	rw.assetConfirmedConsumingMsgFileSeq()
+
 	if err := fileutil.MkdirIfNotExist(rw.offsetDir); err != nil {
 		rw.logger.Error(ctx, err)
 		return nil, err
 	}
+
 	fp, err := os.OpenFile(rw.buildOffsetFileName(rw.consumingFileSeq), os.O_RDWR|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
 		rw.logger.Error(ctx, err)
 		return nil, err
 	}
+
 	fileInfo, err := fp.Stat()
 	if err != nil {
 		return nil, err
 	}
+
 	if fileInfo.IsDir() {
 		err = errdef.FileIsNotRegularFileErr
 		rw.logger.Error(ctx, err)
 		return nil, err
 	}
+
 	return fp, nil
 }
 
@@ -404,15 +402,18 @@ func (rw *consumerMsgReadWriter) makeIndexFp(ctx context.Context, fileSeq uint32
 		}
 		return nil, err
 	}
+
 	fileInfo, err := fp.Stat()
 	if err != nil {
 		return nil, err
 	}
+
 	if fileInfo.IsDir() {
 		err = errdef.FileIsNotRegularFileErr
 		rw.logger.Error(ctx, err)
 		return nil, err
 	}
+
 	return fp, nil
 }
 
@@ -436,7 +437,7 @@ func (rw *consumerMsgReadWriter) buildIndexFileName(fileSeq uint32) string {
 	return fileName
 }
 
-func (rw *consumerMsgReadWriter) calMinOrMaxMsgFileSeq(ctx context.Context) error {
+func (rw *consumerMsgReadWriter) calMaxMsgFileSeq(ctx context.Context) error {
 	if err := fileutil.MkdirIfNotExist(rw.indexDir); err != nil {
 		rw.logger.Error(ctx, err)
 		return err
@@ -448,7 +449,7 @@ func (rw *consumerMsgReadWriter) calMinOrMaxMsgFileSeq(ctx context.Context) erro
 		return err
 	}
 
-	var minFileSeq, maxFileSeq uint32
+	var maxFileSeq uint32
 	for _, file := range files {
 		if file.IsDir() {
 			continue
@@ -460,16 +461,13 @@ func (rw *consumerMsgReadWriter) calMinOrMaxMsgFileSeq(ctx context.Context) erro
 			return err
 		}
 
-		if minFileSeq == 0 || minFileSeq > seq {
-			minFileSeq = seq
-		}
 		if maxFileSeq == 0 || maxFileSeq < seq {
 			maxFileSeq = seq
 		}
 	}
 	
 	rw.maxFileSeq = maxFileSeq
-	rw.minFileSeq = minFileSeq
+	rw.confirmMaxFileSeq = true
 
 	return nil
 }
