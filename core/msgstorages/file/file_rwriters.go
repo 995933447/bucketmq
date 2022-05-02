@@ -1,6 +1,8 @@
 package file
 
-import "os"
+import (
+	"os"
+)
 
 const (
 	indexFileSuffixName = "idx"

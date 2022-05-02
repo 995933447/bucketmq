@@ -22,10 +22,9 @@ func mockTopicMsgWriter() (*topicMsgWriter, error) {
 		"test_topic",
 		"/data/bucketmqtest/index",
 		"/data/bucketmqtest/data",
-		1,
 		2,
 		100,
-		0,
+		5,
 		log.DefaultLogger,
 	)
 }

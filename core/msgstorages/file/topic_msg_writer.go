@@ -6,10 +6,9 @@ import (
 	"github.com/995933447/bucketmq/core/msgstorages"
 	"github.com/995933447/bucketmq/core/utils/fileutil"
 	errdef "github.com/995933447/bucketmqerrdef"
+	"io/ioutil"
 	"os"
 	"reflect"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -67,6 +66,8 @@ type topicMsgWriter struct {
 	topicName string
 	// 消息文件序列号
 	fileSeq uint32
+	// 是否已经确定可写入的文件序号
+	confirmFileSeq bool
 	// 消息文件写入处理器
 	fileWritersWrapper *topicFileWritersWrapper
 	//　消息文件是否被污染
@@ -92,7 +93,7 @@ type topicMsgWriter struct {
 func newTopicMsgWriter(
 	ctx context.Context,
 	topicName, indexDir, dataDir string,
-	beginFileSeq, maxWritableMsgNum, maxWritableMsgBytes uint32,
+	maxWritableMsgNum, maxWritableMsgBytes uint32,
 	syncToDiskInterval time.Duration,
 	logger log.Logger,
 	) (*topicMsgWriter, error) {
@@ -104,7 +105,6 @@ func newTopicMsgWriter(
 		indexDir: indexDir,
 		dataDir: dataDir,
 		topicName: topicName,
-		fileSeq: beginFileSeq,
 		syncToDiskInterval: syncToDiskInterval,
 		logger: logger,
 	}
@@ -122,8 +122,14 @@ func (w *topicMsgWriter) init(ctx context.Context, maxWritableMsgNum, maxWritabl
 		return nil
 	}
 
+	if err := w.sureWritableFileSeq(ctx, maxWritableMsgBytes, maxWritableMsgBytes); err != nil {
+		w.logger.Error(ctx, err)
+		return err
+	}
+
 	indexFp, err := w.makeIndexFp(ctx)
 	if err != nil {
+		w.logger.Error(ctx, err)
 		return err
 	}
 	indexFileInfo, err := indexFp.Stat()
@@ -174,6 +180,68 @@ func (w *topicMsgWriter) init(ctx context.Context, maxWritableMsgNum, maxWritabl
 	return nil
 }
 
+func (w *topicMsgWriter) sureWritableFileSeq(ctx context.Context, maxWritableMsgNum, maxWritableMsgBytes uint32) error {
+	if err := fileutil.MkdirIfNotExist(w.indexDir); err != nil {
+		w.logger.Error(ctx, err)
+		return err
+	}
+
+	indexFiles, err := ioutil.ReadDir(w.indexDir)
+	if err != nil {
+		w.logger.Error(ctx, err)
+		return err
+	}
+
+	var maxFileSeq uint32
+	for _, file := range indexFiles {
+		if file.IsDir() {
+			continue
+		}
+
+		seq, err := fileutil.ParseFileSeqBeforeSuffix(file.Name(), indexFileSuffixName)
+		if err != nil {
+			w.logger.Error(ctx, err)
+			return err
+		}
+
+		if maxFileSeq == 0 || maxFileSeq < seq {
+			maxFileSeq = seq
+		}
+	}
+	writingFileSeq := maxFileSeq
+
+	indexFileName := fileutil.BuildIndexFileName(w.topicName, w.indexDir, indexFileSuffixName, writingFileSeq)
+	indexFileInfo, err := os.Stat(indexFileName)
+	if err == nil {
+		indexFileSize := indexFileInfo.Size()
+		if indexFileSize % indexBufSize > 0 {
+			w.hasFileCorruption = true
+			err = errdef.FileCorruptionErr
+			w.logger.Error(ctx, err)
+			return err
+		}
+
+		dataFileName := fileutil.BuildDataFileName(w.topicName, w.dataDir, dataFileSuffixName, writingFileSeq)
+		dataFileInfo, err := os.Stat(dataFileName)
+		if err != nil {
+			w.logger.Error(ctx, err)
+			return err
+		}
+
+		if uint32(indexFileSize / indexBufSize) >= maxWritableMsgNum || uint32(dataFileInfo.Size()) >= maxWritableMsgBytes {
+			writingFileSeq++
+		}
+	} else if !os.IsNotExist(err) {
+		w.logger.Error(ctx, err)
+		return err
+	}
+
+	w.fileSeq = writingFileSeq
+	w.confirmFileSeq = true
+
+	return nil
+}
+
 func (w *topicMsgWriter) setLogger(logger log.Logger) error {
 	if logger == nil {
 		err := errdef.NewErr(errdef.ErrCodeArgsInvalid, "expected " + reflect.TypeOf(logger).Name() + ", but nil")
@@ -183,14 +251,22 @@ func (w *topicMsgWriter) setLogger(logger log.Logger) error {
 	return nil
 }
 
+func (w *topicMsgWriter) assetConfirmedWritableFileSeq() {
+	if w.confirmFileSeq {
+		return
+	}
+	panic("must call *topicMsgWriter.ConfirmWritableFileSeq to set *consumerMsgReadWriter.fileSeq first.")
+}
+
 func (w *topicMsgWriter) makeIndexFp(ctx context.Context) (*os.File, error) {
+	w.assetConfirmedWritableFileSeq()
+
 	if err := fileutil.MkdirIfNotExist(w.indexDir); err != nil {
 		w.logger.Error(ctx, err)
 		return nil, err
 	}
 
-	fileSeqStr := strconv.FormatUint(uint64(w.fileSeq), 10)
-	indexFileName := strings.TrimRight(w.indexDir, "/") + "/" + w.topicName + "." + fileSeqStr + "." + indexFileSuffixName
+	indexFileName := fileutil.BuildIndexFileName(w.topicName, w.indexDir, indexFileSuffixName, w.fileSeq)
 	fp, err := os.OpenFile(indexFileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
 		return nil, err
@@ -213,8 +289,7 @@ func (w *topicMsgWriter) makeDataFp(ctx context.Context) (*os.File, error) {
 		return nil, err
 	}
 
-	fileSeqStr := strconv.FormatUint(uint64(w.fileSeq), 10)
-	dataFileName := strings.TrimRight(w.dataDir, "/") + "/" + w.topicName + "." + fileSeqStr + "." + dataFileSuffixName
+	dataFileName := fileutil.BuildDataFileName(w.topicName, w.dataDir, dataFileSuffixName, w.fileSeq)
 	dataFp, err := os.OpenFile(dataFileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
 		return nil, err

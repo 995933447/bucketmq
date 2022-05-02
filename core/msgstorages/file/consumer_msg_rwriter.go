@@ -9,8 +9,6 @@ import (
 	"io"
 	"io/ioutil"
 	"os"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -22,7 +20,7 @@ type consumerFileReadWritersWrapper struct {
 
 type consumerMsgReadWriter struct {
 	topicName string
-	consumerName string
+	consumerGroupName string
 	indexDir string
 	dataDir string
 	offsetDir string
@@ -215,14 +213,14 @@ func (rw *consumerMsgReadWriter) sureConsumingMsgFileSeq(ctx context.Context) er
 		return err
 	}
 
-	files, err := ioutil.ReadDir(rw.offsetDir)
+	offsetFiles, err := ioutil.ReadDir(rw.offsetDir)
 	if err != nil {
 		rw.logger.Error(ctx, err)
 		return err
 	}
 
 	var maxOffsetFileSeq uint32
-	for _, file := range files {
+	for _, file := range offsetFiles {
 		if file.IsDir() {
 			continue
 		}
@@ -240,7 +238,8 @@ func (rw *consumerMsgReadWriter) sureConsumingMsgFileSeq(ctx context.Context) er
 
 	if maxOffsetFileSeq > 0 {
 		if rw.maxFileSeq > maxOffsetFileSeq {
-			consumingIndexFileInfo, err := os.Stat(rw.buildIndexFileName(maxOffsetFileSeq))
+			consumingIndexFileName := fileutil.BuildIndexFileName(rw.topicName, rw.dataDir, indexFileSuffixName, maxOffsetFileSeq)
+			consumingIndexFileInfo, err := os.Stat(consumingIndexFileName)
 			if err == nil && !consumingIndexFileInfo.IsDir() {
 				consumingIndexFileSize := consumingIndexFileInfo.Size()
 				if consumingIndexFileSize % indexBufSize > 0 {
@@ -251,7 +250,8 @@ func (rw *consumerMsgReadWriter) sureConsumingMsgFileSeq(ctx context.Context) er
 				}
 				indexNumOfConsumingFile := consumingIndexFileSize / indexBufSize
 
-				offsetFileInfo, err := os.Stat(rw.buildOffsetFileName(maxOffsetFileSeq))
+				offsetFileName := fileutil.BuildOffsetFileName(rw.topicName, rw.consumerGroupName, rw.offsetDir, offsetFileSuffixName, maxOffsetFileSeq)
+				offsetFileInfo, err := os.Stat(offsetFileName)
 				if err == nil {
 					offsetFileSize := offsetFileInfo.Size()
 					if offsetFileSize % offsetBufSize > 0 {
@@ -346,7 +346,8 @@ func (rw *consumerMsgReadWriter) makeDataFp(ctx context.Context) (*os.File, erro
 		return nil, err
 	}
 
-	fp, err := os.OpenFile(rw.buildDataFileName(rw.consumingFileSeq), os.O_RDWR|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
+	dataFileName := fileutil.BuildDataFileName(rw.topicName, rw.dataDir, dataFileSuffixName, rw.consumingFileSeq)
+	fp, err := os.OpenFile(dataFileName, os.O_RDWR|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
 		rw.logger.Error(ctx, err)
 		return nil, err
@@ -374,7 +375,8 @@ func (rw *consumerMsgReadWriter) makeOffsetFp(ctx context.Context) (*os.File, er
 		return nil, err
 	}
 
-	fp, err := os.OpenFile(rw.buildOffsetFileName(rw.consumingFileSeq), os.O_RDWR|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
+	offsetFileName := fileutil.BuildOffsetFileName(rw.topicName, rw.dataDir, rw.consumerGroupName, dataFileSuffixName, rw.consumingFileSeq)
+	fp, err := os.OpenFile(offsetFileName, os.O_RDWR|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
 		rw.logger.Error(ctx, err)
 		return nil, err
@@ -395,7 +397,8 @@ func (rw *consumerMsgReadWriter) makeOffsetFp(ctx context.Context) (*os.File, er
 }
 
 func (rw *consumerMsgReadWriter) makeIndexFp(ctx context.Context, fileSeq uint32) (*os.File, error) {
-	fp, err := os.OpenFile(rw.buildIndexFileName(fileSeq), os.O_RDONLY, os.FileMode(0755))
+	indexFileName := fileutil.BuildIndexFileName(rw.topicName, rw.indexDir, indexFileSuffixName, fileSeq)
+	fp, err := os.OpenFile(indexFileName, os.O_RDONLY, os.FileMode(0755))
 	if err != nil {
 		if !os.IsNotExist(err) {
 			rw.logger.Error(ctx, err)
@@ -415,26 +418,6 @@ func (rw *consumerMsgReadWriter) makeIndexFp(ctx context.Context, fileSeq uint32
 	}
 
 	return fp, nil
-}
-
-func (rw *consumerMsgReadWriter) buildDataFileName(fileSeq uint32) string {
-	fileSeqStr := strconv.FormatUint(uint64(fileSeq), 10)
-	fileName := strings.TrimRight(rw.dataDir, "/") + "/" + rw.topicName + "." +
-		rw.consumerName + "." + fileSeqStr + "." + dataFileSuffixName
-	return fileName
-}
-
-func (rw *consumerMsgReadWriter) buildOffsetFileName(fileSeq uint32) string {
-	fileSeqStr := strconv.FormatUint(uint64(fileSeq), 10)
-	fileName := strings.TrimRight(rw.offsetDir, "/") + "/" + rw.topicName + "." +
-		rw.consumerName + "." + fileSeqStr + "." + offsetFileSuffixName
-	return fileName
-}
-
-func (rw *consumerMsgReadWriter) buildIndexFileName(fileSeq uint32) string {
-	fileSeqStr := strconv.FormatUint(uint64(fileSeq), 10)
-	fileName := strings.TrimRight(rw.indexDir, "/") + "/" + rw.topicName + "." + fileSeqStr + "." + indexFileSuffixName
-	return fileName
 }
 
 func (rw *consumerMsgReadWriter) calMaxMsgFileSeq(ctx context.Context) error {

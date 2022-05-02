@@ -25,3 +25,21 @@ func ParseFileSeqBeforeSuffix(fileName, suffixName string) (uint32, error) {
 	}
 	return uint32(seqForUnit64), nil
 }
+
+func BuildMsgFileName(baseFileName, dir, suffixName string, fileSeq uint32) string {
+	fileSeqStr := strconv.FormatUint(uint64(fileSeq), 10)
+	fileName := strings.TrimRight(dir, "/") + "/" + baseFileName + "." + fileSeqStr + "." + suffixName
+	return fileName
+}
+
+func BuildIndexFileName(topicName, dir, suffixName string, fileSeq uint32) string {
+	return BuildMsgFileName(topicName, dir, suffixName, fileSeq)
+}
+
+func BuildDataFileName(topicName, dir, suffixName string, fileSeq uint32) string {
+	return BuildMsgFileName(topicName, dir, suffixName, fileSeq)
+}
+
+func BuildOffsetFileName(topicName, consumerGroupName, dir, suffixName string, fileSeq uint32) string {
+	return BuildMsgFileName(topicName + "." + consumerGroupName, dir, suffixName, fileSeq)
+}
