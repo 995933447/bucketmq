@@ -25,15 +25,16 @@ type consumerMsgReadWriter struct {
 	dataDir string
 	offsetDir string
 	maxFileSeq uint32
-	confirmMaxFileSeq bool
+	confirmedMaxFileSeq bool
 	consumingFileSeq uint32
-	confirmConsumingFileSeq bool
+	confirmedConsumingFileSeq bool
 	fileReadWritersWrapper *consumerFileReadWritersWrapper
 	preloadMsgFileNum uint32
-	finishedOffsetsOfConsumingFile *structs.Uint32Set
+	consumedOffsetsOfConsumingFile *structs.Uint32Set
 	hasFileCorruption bool
 	syncToDiskInterval time.Duration
 	*msgEncoder
+	maxConfirmTimePerMsg time.Duration
 	logger log.Logger `access:"r"`
 	readyStopLoop bool
 	stopLoopEventCh chan struct{}
@@ -71,7 +72,7 @@ func (rw *consumerMsgReadWriter) openAndPreloadMsgFiles(ctx context.Context) err
 		return err
 	}
 
-	if err := rw.loadFinishedOffsets(ctx); err != nil {
+	if err := rw.loadConsumedOffsets(ctx); err != nil {
 		rw.logger.Error(ctx, err)
 		return err
 	}
@@ -192,14 +193,14 @@ func (rw *consumerMsgReadWriter) calMsgFileSeqInfo(ctx context.Context) error {
 }
 
 func (rw *consumerMsgReadWriter) assetConfirmedMaxMsgFileSeq() {
-	if rw.confirmMaxFileSeq {
+	if rw.confirmedMaxFileSeq {
 		return
 	}
 	panic("must call *consumerMsgReadWriter.calMsgFileSeqInfo(context.Context) to set *consumerMsgReadWriter.maxFileSeq first.")
 }
 
 func (rw *consumerMsgReadWriter) assetConfirmedConsumingMsgFileSeq() {
-	if rw.confirmConsumingFileSeq {
+	if rw.confirmedConsumingFileSeq {
 		return
 	}
 	panic("must call *consumerMsgReadWriter.sureConsumingMsgFileSeq(context.Context) to set *consumerMsgReadWriter.maxFileSeq first.")
@@ -225,7 +226,11 @@ func (rw *consumerMsgReadWriter) sureConsumingMsgFileSeq(ctx context.Context) er
 			continue
 		}
 
-		seq, err := fileutil.ParseFileSeqBeforeSuffix(file.Name(), offsetFileSuffixName)
+		seq, err := fileutil.TrimPreSuffixToParseFileSeq(
+			file.Name(),
+			fileutil.BuildOffsetFilePrefixName(rw.topicName, rw.consumerGroupName),
+			offsetFileSuffixName,
+			)
 		if err != nil {
 			rw.logger.Error(ctx, err)
 			return err
@@ -274,7 +279,6 @@ func (rw *consumerMsgReadWriter) sureConsumingMsgFileSeq(ctx context.Context) er
 		}
 	}
 
-
 	rw.consumingFileSeq = maxOffsetFileSeq
 
 	return nil
@@ -285,7 +289,7 @@ func (rw *consumerMsgReadWriter) loadIndexes(ctx context.Context) error {
 }
 
 
-func (rw *consumerMsgReadWriter) loadFinishedOffsets(ctx context.Context) error {
+func (rw *consumerMsgReadWriter) loadConsumedOffsets(ctx context.Context) error {
 	if rw.fileReadWritersWrapper == nil || rw.fileReadWritersWrapper.offsetFileReadWriter == nil {
 		if err := rw.initOffsetFileReadWriter(ctx); err != nil {
 			rw.logger.Error(ctx, err)
@@ -328,11 +332,11 @@ func (rw *consumerMsgReadWriter) loadFinishedOffsets(ctx context.Context) error 
 		return err
 	}
 
-	if rw.finishedOffsetsOfConsumingFile == nil {
-		rw.finishedOffsetsOfConsumingFile = &structs.Uint32Set{}
+	if rw.consumedOffsetsOfConsumingFile == nil {
+		rw.consumedOffsetsOfConsumingFile = &structs.Uint32Set{}
 	}
 	for _, offset := range offsets {
-		rw.finishedOffsetsOfConsumingFile.Put(offset)
+		rw.consumedOffsetsOfConsumingFile.Put(offset)
 	}
 
 	return nil
@@ -438,7 +442,7 @@ func (rw *consumerMsgReadWriter) calMaxMsgFileSeq(ctx context.Context) error {
 			continue
 		}
 
-		seq, err := fileutil.ParseFileSeqBeforeSuffix(file.Name(), indexFileSuffixName)
+		seq, err := fileutil.TrimPreSuffixToParseFileSeq(file.Name(), rw.topicName, indexFileSuffixName)
 		if err != nil {
 			rw.logger.Error(ctx, err)
 			return err
@@ -450,7 +454,7 @@ func (rw *consumerMsgReadWriter) calMaxMsgFileSeq(ctx context.Context) error {
 	}
 	
 	rw.maxFileSeq = maxFileSeq
-	rw.confirmMaxFileSeq = true
+	rw.confirmedMaxFileSeq = true
 
 	return nil
 }

@@ -5,12 +5,19 @@ import (
 )
 
 const (
+	minFileSeq = 1
+)
+
+const (
 	indexFileSuffixName = "idx"
 	dataFileSuffixName = "dat"
 	offsetFileSuffixName = "offset"
+	attemptCntFileSuffixName = "attempt"
+	failedFileSuffixName = "fail"
 )
 
 type indexFileWriter struct {
+	dir string
 	fp *os.File
 	maxWritableIndexNum uint32
 	writtenIndexNum uint32
@@ -21,6 +28,7 @@ type indexFileReader struct {
 }
 
 type dataFileWriter struct {
+	dir string
 	fp *os.File
 	maxWritableDataBytes uint32
 	writtenDataBytes uint32

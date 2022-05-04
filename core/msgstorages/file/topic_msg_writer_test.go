@@ -30,7 +30,11 @@ func mockTopicMsgWriter() (*topicMsgWriter, error) {
 }
 
 func TestWriteTopicMsg(t *testing.T) {
-	w, _ := mockTopicMsgWriter()
+	w, err := mockTopicMsgWriter()
+	if err != nil {
+		t.Error(err)
+		return
+	}
 	go func() {
 		if err := w.loop(context.Background()); err != nil {
 			t.Error(err)
@@ -43,8 +47,6 @@ func TestWriteTopicMsg(t *testing.T) {
 			Data: []byte(fmt.Sprintf("Hello world, %d", i)),
 			Bucket: 1,
 			CreatedAt: uint32(time.Now().Unix()),
-			MaxExecTimeLong: uint32(10),
-			MaxRetryCnt: 5,
 		})
 	}
 

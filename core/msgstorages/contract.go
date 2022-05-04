@@ -11,13 +11,9 @@ type MsgMetadata struct {
 	// 消息创建时间
 	createdAt uint32 `access:"r"`
 	// 消息优先级
-	priority uint16 `access:"r"`
+	priority uint8 `access:"r"`
 	// 延迟消费时间
 	delaySeconds uint32 `access:"r"`
-	// 最大执行时间
-	maxExecTimeLong uint32 `access:"r"`
-	// 最大执行次数
-	maxRetryCnt uint32 `access:"r"`
 	// 消息过期时间
 	expireAt uint32 `access:"r"`
 	// 消息ID
@@ -36,20 +32,12 @@ func (m *MsgMetadata) GetCreatedAt() uint32 {
 	return m.createdAt
 }
 
-func (m *MsgMetadata) GetPriority() uint16 {
+func (m *MsgMetadata) GetPriority() uint8 {
 	return m.priority
 }
 
 func (m *MsgMetadata) GetDelaySeconds() uint32 {
 	return m.delaySeconds
-}
-
-func (m *MsgMetadata) GetMaxExecTimeLong() uint32 {
-	return m.maxExecTimeLong
-}
-
-func (m *MsgMetadata) GetMaxRetryCnt() uint32 {
-	return m.maxRetryCnt
 }
 
 func (m *MsgMetadata) GetExpireAt() uint32 {
@@ -78,13 +66,9 @@ type NewMsgReq struct {
 	// 消息创建时间
 	CreatedAt uint32
 	// 消息优先级
-	Priority uint16
+	Priority uint8
 	// 延迟消费时间
 	DelaySeconds uint32
-	// 最大执行时间
-	MaxExecTimeLong uint32
-	// 最大执行次数
-	MaxRetryCnt uint32
 	// 消息id,需要保证唯一性
 	Id string
 	// 消息过期时间
@@ -105,8 +89,6 @@ func NewMsg(req *NewMsgReq) *Message {
 			createdAt:       req.CreatedAt,
 			priority:        req.Priority,
 			delaySeconds:    req.DelaySeconds,
-			maxExecTimeLong: req.MaxExecTimeLong,
-			maxRetryCnt:     req.MaxRetryCnt,
 			expireAt:        req.ExpireAt,
 			msgId:           msgId,
 		},
@@ -124,22 +106,24 @@ func (m *Message) GetDataPayload() *MsgDataPayload {
 	return m.dataPayload
 }
 
-type RetryMsgReq struct {
+type ReleaseMsgReq struct {
 	// 消息id
-	msgId string
-	// 是否跳过本次消息重试次数累加
-	skipAddingRetryCnt bool
-	// 重试间隔
-	RetryInterval uint32
+	MsgId string
+	// 是否跳过本次消息尝试次数累加计算
+	SkipIncrConsumedCnt bool
+	// 重试时间
+	RetryAt uint32
 }
 
 type MsgStorage interface {
-	// PushMsg 写入消息
-	PushMsg(context.Context, *Message) error
-	// PopMsg 弹出消息
-	PopMsg(context.Context) (*Message, error)
-	// SetMsgConsumptionFinished 确认消息消费完成
-	SetMsgConsumptionFinished(ctx context.Context, msgId string) error
-	// SetMsgWillBeRetried 消息重试
-	SetMsgWillBeRetried(context.Context, *RetryMsgReq) error
+	// Push 写入消息
+	Push(ctx context.Context, topicName string, msg *Message) error
+	// Pop 弹出消息
+	Pop(ctx context.Context, topicName, consumerGroupName string) (*Message, error)
+	// Done 确认消息消费完成状态
+	Done(ctx context.Context, topicName, consumerGroupName string, msgId string) error
+	// Release 确认消息重试状态
+	Release(context.Context, *ReleaseMsgReq) error
+	// Fail 缺认消息消费失败状态
+	Fail(ctx context.Context, topicName, consumerGroupName string, msgId string) error
 }

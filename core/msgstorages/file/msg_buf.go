@@ -13,10 +13,10 @@ const (
 const (
 	// 0x12 + 0x34 = 2 bytes
 	bufBoundarySize = 2
-	// indexes buf len: Bucket(4 bytes) + CreatedAt(4 bytes) + Priority(2 byte)
-	//	+ DelaySeconds(4 bytes) + MaxExecTimeLong(4 bytes) + MaxRetryCnt(4 bytes) + ExpireAt(4 bytes)
-	//	+ DataLen(4 bytes) + MsgIdLen(4 bytes) + bufBoundarySize(2 bytes) = 34 bytes
-	indexBufSize = 68
+	// indexes buf len: Bucket(4 bytes) + CreatedAt(4 bytes) + Priority(1 byte)
+	//	+ DelaySeconds(4 bytes) + ExpireAt(4 bytes)
+	//	+ DataLen(4 bytes) + MsgIdLen(36 bytes) + bufBoundarySize(2 bytes) = 60 bytes
+	indexBufSize = 59
 	offsetBufSize = 4
 )
 
@@ -59,13 +59,11 @@ func (e *msgEncoder) encodeBuf(msgs []*msgstorages.Message) (indexesBuf []byte, 
 		endian.PutUint32(writableIndexesBuf[1:5], metadata.GetCreatedAt())
 		endian.PutUint32(writableIndexesBuf[5:9], metadata.GetBucket())
 		endian.PutUint32(writableIndexesBuf[9:13], metadata.GetExpireAt())
-		endian.PutUint16(writableIndexesBuf[13:15], metadata.GetPriority())
-		endian.PutUint32(writableIndexesBuf[15:19], metadata.GetDelaySeconds())
-		endian.PutUint32(writableIndexesBuf[19:23], metadata.GetMaxExecTimeLong())
-		endian.PutUint32(writableIndexesBuf[23:27], metadata.GetMaxRetryCnt())
-		endian.PutUint32(writableIndexesBuf[27:31], uint32(dataLen))
-		copy(writableIndexesBuf[31:67], metadata.GetMsgId())
-		writableIndexesBuf[67] = bufEndBoundary
+		writableIndexesBuf[13] = metadata.GetPriority()
+		endian.PutUint32(writableIndexesBuf[14:18], metadata.GetDelaySeconds())
+		endian.PutUint32(writableIndexesBuf[18:22], uint32(dataLen))
+		copy(writableIndexesBuf[22:58], metadata.GetMsgId())
+		writableIndexesBuf[58] = bufEndBoundary
 
 		writableDataBuf := e.dataBuf[writtenDataBufLen:]
 		writableDataBuf[0] = bufBeginBoundary
