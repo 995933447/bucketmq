@@ -110,7 +110,7 @@ func (fw *topicFileWritersWrapper) syncToDisk(ctx context.Context) error {
 }
 
 //　检查文件是否被污染
-func (fw *topicFileWritersWrapper) checkFilesCorruption(ctx context.Context) (bool, error) {
+func (fw *topicFileWritersWrapper) checkFilesForCorrupt(ctx context.Context) (bool, error) {
 	indexFileInfo, err := fw.indexFileWriter.fp.Stat()
 	if err != nil {
 		fw.logger.Error(ctx, err)
@@ -585,7 +585,7 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 					hasFileCorruption bool
 					err error
 				)
-				if hasFileCorruption, err = w.fileWritersWrapper.checkFilesCorruption(ctx); err != nil {
+				if hasFileCorruption, err = w.fileWritersWrapper.checkFilesForCorrupt(ctx); err != nil {
 					return err
 				} else if hasFileCorruption {
 					err =  errdef.FileCorruptionErr
