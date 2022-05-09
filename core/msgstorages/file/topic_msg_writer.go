@@ -370,7 +370,7 @@ type topicMsgWriter struct {
 	//　日志组件
 	logger log.Logger `access:"r"`
 	// 接收消息的chan
-	writeReqChan chan *WriteMsgReq `access:"r"`
+	writeMsgReqChan chan *WriteMsgReq `access:"r"`
 	//　接收停止时间循环的信号的chan
 	stopLoopEventCh chan struct{}
 	//　是否已经完成初始化
@@ -433,7 +433,7 @@ func (w *topicMsgWriter) init(ctx context.Context) error {
 		return err
 	}
 
-	w.writeReqChan = make(chan *WriteMsgReq, 10000)
+	w.writeMsgReqChan = make(chan *WriteMsgReq, 10000)
 	w.stopLoopEventCh = make(chan struct{}, 10000)
 	w.finishInit = true
 
@@ -457,7 +457,7 @@ func (w *topicMsgWriter) assetRequiredFieldsBeforeInit(ctx context.Context) erro
 }
 
 func (w *topicMsgWriter) WriteReqChan() chan *WriteMsgReq {
-	return w.writeReqChan
+	return w.writeMsgReqChan
 }
 
 //　设置日志组件
@@ -567,32 +567,44 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 	writeMsgsAsPossible := func(firstWriteReq *WriteMsgReq) error {
 		var (
 			msgs []*msgstorages.Message
-			writtenEventChs []chan *WrittenMsgEvent
+			msgOffsetToWrittenEventChMap = make(map[uint64]chan *WrittenMsgEvent)
 			allocNextMsgOffset = w.fileWritersWrapper.firstMsgOffset + uint64(w.fileWritersWrapper.writtenIndexNum)
 		)
 
 		handleDataForReadyWrite := func(writeMsgReq *WriteMsgReq) {
 			msg := writeMsgReq.msg
-			msg.GetMetadata().SetMsgOffset(allocNextMsgOffset)
-			msgs = append(msgs, msg)
-			if writeMsgReq.writtenEventChan != nil {
-				writtenEventChs = append(writtenEventChs, firstWriteReq.writtenEventChan)
+			if msg != nil {
+				msgs = append(msgs, msg)
+				msgMetadata := msg.GetMetadata()
+				msgMetadata.MsgOffset = allocNextMsgOffset
+				if writeMsgReq.writtenEventChan != nil {
+					msgOffsetToWrittenEventChMap[msgMetadata.MsgOffset] = writeMsgReq.writtenEventChan
+				}
+				allocNextMsgOffset++
 			}
-			allocNextMsgOffset++
 		}
 
 		if firstWriteReq != nil {
 			handleDataForReadyWrite(firstWriteReq)
 		}
 
+		var (
+			execTimeoutTick = time.NewTicker(time.Millisecond * 100)
+			isExecTimeout bool
+		)
 		for {
 			var moreWriteMsgReq *WriteMsgReq
 			select {
-				case moreWriteMsgReq = <- w.writeReqChan:
-					handleDataForReadyWrite(moreWriteMsgReq)
+				case moreWriteMsgReq = <- w.writeMsgReqChan:
+					if moreWriteMsgReq != nil {
+						handleDataForReadyWrite(moreWriteMsgReq)
+					}
+				case <- execTimeoutTick.C:
+					isExecTimeout = true
 				default:
 			}
-			if moreWriteMsgReq == nil {
+			if moreWriteMsgReq == nil || isExecTimeout {
+				execTimeoutTick.Stop()
 				break
 			}
 		}
@@ -602,9 +614,10 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 		}
 
 		notifyWrittenMsgsResult := func(success bool) {
-			for _, ch := range writtenEventChs {
+			for msgOffset, ch := range msgOffsetToWrittenEventChMap {
 				ch <- &WrittenMsgEvent{
 					success: success,
+					msgOffset: msgOffset,
 				}
 			}
 		}
@@ -623,11 +636,11 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 
 	for {
 		select {
-			case writeReq := <- w.writeReqChan:
+			case writeMsgReq := <- w.writeMsgReqChan:
 				if w.readyStopLoop {
 					continue
 				}
-				err := writeMsgsAsPossible(writeReq)
+				err := writeMsgsAsPossible(writeMsgReq)
 				if err != nil {
 					w.logger.Error(ctx, err)
 					return err

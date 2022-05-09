@@ -43,8 +43,8 @@ func TestWriteTopicMsg(t *testing.T) {
 
 	var writtenResultChs []chan *WrittenMsgEvent
 	for i := 0; i < 10; i++ {
-		writtenMsgEventCh := make(chan *WrittenMsgEvent)
-		w.writeReqChan <- &WriteMsgReq{
+		writtenMsgEventCh := make(chan *WrittenMsgEvent, 1)
+		w.writeMsgReqChan <- &WriteMsgReq{
 			msg: msgstorages.NewMsg(&msgstorages.NewMsgReq{
 				Data:      []byte(fmt.Sprintf("Hello world, %d", i)),
 				Bucket:    1,
@@ -55,10 +55,9 @@ func TestWriteTopicMsg(t *testing.T) {
 		writtenResultChs = append(writtenResultChs, writtenMsgEventCh)
 	}
 
-	for _, ch := range writtenResultChs {
+	for n, ch := range writtenResultChs {
+		t.Logf("loop:%d", n + 1)
 		res := <- ch
 		t.Logf("%+v", res)
 	}
-
-	//time.Sleep(time.Second * 10)
 }

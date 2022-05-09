@@ -61,7 +61,7 @@ func (e *msgEncoder) encodeBuf(msgs []*msgstorages.Message) (indexesBuf []byte, 
 		endian.PutUint32(writableIndexesBuf[9:13], metadata.GetExpireAt())
 		writableIndexesBuf[13] = metadata.GetPriority()
 		endian.PutUint32(writableIndexesBuf[14:18], metadata.GetDelaySeconds())
-		endian.PutUint64(writableIndexesBuf[18:26], metadata.GetMsgOffset())
+		endian.PutUint64(writableIndexesBuf[18:26], metadata.MsgOffset)
 		endian.PutUint32(writableIndexesBuf[26:30], uint32(dataLen))
 		copy(writableIndexesBuf[30:46], metadata.GetMsgId())
 		writableIndexesBuf[46] = bufEndBoundary
