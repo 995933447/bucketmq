@@ -562,8 +562,6 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 			firstMsg.GetMetadata().SetMsgOffset(allocNextMsgOffset)
 			msgs = append(msgs, firstMsg)
 			allocNextMsgOffset++
-		} else {
-			allocNextMsgOffset = w.fileWritersWrapper.firstMsgOffset + uint64(w.fileWritersWrapper.writtenIndexNum)
 		}
 
 		for {
