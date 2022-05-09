@@ -18,6 +18,16 @@ type MsgMetadata struct {
 	expireAt uint32 `access:"r"`
 	// 消息ID
 	msgId string `access:"r"`
+	// 全局消息位移
+	msgOffset uint64 `access:"rw"`
+}
+
+func (m *MsgMetadata) GetMsgOffset() uint64 {
+	return m.msgOffset
+}
+
+func (m *MsgMetadata) SetMsgOffset(msgOffset uint64) {
+	m.msgOffset = msgOffset
 }
 
 func (m *MsgMetadata) GetMsgId() string {

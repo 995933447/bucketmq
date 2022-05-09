@@ -20,8 +20,7 @@ func mockTopicMsgWriter() (*topicMsgWriter, error) {
 	return newTopicMsgWriter(
 		context.TODO(),
 		"test_topic",
-		"/data/bucketmqtest/index",
-		"/data/bucketmqtest/data",
+		"/data/bucketmqtest",
 		2,
 		100,
 		5,

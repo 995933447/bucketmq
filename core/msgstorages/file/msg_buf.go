@@ -15,8 +15,8 @@ const (
 	bufBoundarySize = 2
 	// indexes buf len: Bucket(4 bytes) + CreatedAt(4 bytes) + Priority(1 byte)
 	//	+ DelaySeconds(4 bytes) + ExpireAt(4 bytes)
-	//	+ DataLen(4 bytes) + MsgIdLen(36 bytes) + bufBoundarySize(2 bytes) = 60 bytes
-	indexBufSize = 59
+	//	+ DataLen(4 bytes) + MsgIdLen(16 bytes) + MsgOffset(8 bytes) + bufBoundarySize(2 bytes) = 47 bytes
+	indexBufSize = 47
 	offsetBufSize = 4
 )
 
@@ -61,9 +61,10 @@ func (e *msgEncoder) encodeBuf(msgs []*msgstorages.Message) (indexesBuf []byte, 
 		endian.PutUint32(writableIndexesBuf[9:13], metadata.GetExpireAt())
 		writableIndexesBuf[13] = metadata.GetPriority()
 		endian.PutUint32(writableIndexesBuf[14:18], metadata.GetDelaySeconds())
-		endian.PutUint32(writableIndexesBuf[18:22], uint32(dataLen))
-		copy(writableIndexesBuf[22:58], metadata.GetMsgId())
-		writableIndexesBuf[58] = bufEndBoundary
+		endian.PutUint64(writableIndexesBuf[18:26], metadata.GetMsgOffset())
+		endian.PutUint32(writableIndexesBuf[26:30], uint32(dataLen))
+		copy(writableIndexesBuf[30:46], metadata.GetMsgId())
+		writableIndexesBuf[46] = bufEndBoundary
 
 		writableDataBuf := e.dataBuf[writtenDataBufLen:]
 		writableDataBuf[0] = bufBeginBoundary

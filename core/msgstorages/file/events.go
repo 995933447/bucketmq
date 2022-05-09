@@ -1,9 +1,9 @@
 package file
 
 type nextSeqFilesOpenEvent struct {
-	fileSeq uint32 `access:"r"`
+	fileSeq string `access:"r"`
 }
 
-func (s *nextSeqFilesOpenEvent) getFileSeq() uint32 {
+func (s *nextSeqFilesOpenEvent) getFileSeq() string {
 	return s.fileSeq
 }
