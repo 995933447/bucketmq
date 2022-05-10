@@ -1,5 +1,5 @@
 package file
 
-type ConsumerMsgController struct {
+type consumerMsgController struct {
 
 }
