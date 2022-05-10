@@ -100,6 +100,23 @@ func NewMsg(req *NewMsgReq) *Message {
 	}
 }
 
+func (m *Message) DeepClone() *Message {
+	return &Message{
+		metadata: &MsgMetadata{
+			bucket:          m.metadata.bucket,
+			createdAt:       m.metadata.createdAt,
+			priority:        m.metadata.priority,
+			delaySeconds:    m.metadata.delaySeconds,
+			expireAt:        m.metadata.expireAt,
+			msgId:           m.metadata.msgId,
+			MsgOffset:		 m.metadata.MsgOffset,
+		},
+		dataPayload: &MsgDataPayload{
+			data: 			m.dataPayload.data,
+		},
+	}
+}
+
 func (m *Message) GetMetadata() *MsgMetadata {
 	return m.metadata
 }

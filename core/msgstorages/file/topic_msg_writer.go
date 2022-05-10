@@ -566,22 +566,20 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 
 	writeMsgsAsPossible := func(firstWriteReq *WriteMsgReq) error {
 		var (
-			msgs []*msgstorages.Message
+			msgClones []*msgstorages.Message
 			msgOffsetToWrittenEventChMap = make(map[uint64]chan *WrittenMsgEvent)
 			allocNextMsgOffset = w.fileWritersWrapper.firstMsgOffset + uint64(w.fileWritersWrapper.writtenIndexNum)
 		)
 
 		handleDataForReadyWrite := func(writeMsgReq *WriteMsgReq) {
-			msg := writeMsgReq.msg
-			if msg != nil {
-				msgs = append(msgs, msg)
-				msgMetadata := msg.GetMetadata()
-				msgMetadata.MsgOffset = allocNextMsgOffset
-				if writeMsgReq.writtenEventChan != nil {
-					msgOffsetToWrittenEventChMap[msgMetadata.MsgOffset] = writeMsgReq.writtenEventChan
-				}
-				allocNextMsgOffset++
+			msgClone := writeMsgReq.msg.DeepClone()
+			msgClones = append(msgClones, msgClone)
+			msgCloneMetadata := msgClone.GetMetadata()
+			msgCloneMetadata.MsgOffset = allocNextMsgOffset
+			if writeMsgReq.writtenEventChan != nil {
+				msgOffsetToWrittenEventChMap[msgCloneMetadata.MsgOffset] = writeMsgReq.writtenEventChan
 			}
+			allocNextMsgOffset++
 		}
 
 		if firstWriteReq != nil {
@@ -609,20 +607,27 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 			}
 		}
 
-		if len(msgs) == 0 {
+		if len(msgClones) == 0 {
 			return nil
 		}
 
 		notifyWrittenMsgsResult := func(err error) {
 			for msgOffset, ch := range msgOffsetToWrittenEventChMap {
-				ch <- &WrittenMsgEvent{
-					err: err,
-					msgOffset: msgOffset,
+				var notifyResultEvent *WrittenMsgEvent
+				if err != nil {
+					notifyResultEvent = &WrittenMsgEvent{
+						err: err,
+					}
+				} else {
+					notifyResultEvent = &WrittenMsgEvent{
+						msgOffset: msgOffset,
+					}
 				}
+				ch <- notifyResultEvent
 			}
 		}
 
-		err := w.writeMsgs(ctx, msgs)
+		err := w.writeMsgs(ctx, msgClones)
 		if err != nil {
 			w.logger.Error(ctx, err)
 			notifyWrittenMsgsResult(err)

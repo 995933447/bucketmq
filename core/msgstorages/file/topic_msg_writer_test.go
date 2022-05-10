@@ -41,23 +41,32 @@ func TestWriteTopicMsg(t *testing.T) {
 		}
 	}()
 
-	var writtenResultChs []chan *WrittenMsgEvent
+	var (
+		writtenResultChs []chan *WrittenMsgEvent
+		msgs []*msgstorages.Message
+	)
 	for i := 0; i < 10; i++ {
 		writtenMsgEventCh := make(chan *WrittenMsgEvent, 1)
+		msg := msgstorages.NewMsg(&msgstorages.NewMsgReq{
+			Data:      []byte(fmt.Sprintf("Hello world, %d", i)),
+			Bucket:    1,
+			CreatedAt: uint32(time.Now().Unix()),
+		})
 		w.writeMsgReqChan <- &WriteMsgReq{
-			msg: msgstorages.NewMsg(&msgstorages.NewMsgReq{
-				Data:      []byte(fmt.Sprintf("Hello world, %d", i)),
-				Bucket:    1,
-				CreatedAt: uint32(time.Now().Unix()),
-			}),
+			msg: msg,
 			writtenEventChan: writtenMsgEventCh,
 		}
 		writtenResultChs = append(writtenResultChs, writtenMsgEventCh)
+		msgs = append(msgs, msg)
 	}
 
 	for n, ch := range writtenResultChs {
 		t.Logf("loop:%d", n + 1)
 		res := <- ch
 		t.Logf("%+v", res)
+	}
+
+	for _, msg := range msgs {
+		t.Logf("msg.MsgOffset:%d", msg.GetMetadata().MsgOffset)
 	}
 }
