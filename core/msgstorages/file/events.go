@@ -9,8 +9,8 @@ func (s *nextSeqFilesOpenEvent) getFileSeq() string {
 }
 
 type WrittenMsgEvent struct {
-	success bool `access:"r"`
-	msgOffset uint64 `access"r"`
+	msgOffset uint64 `access:"r"`
+	err error `access:"r"`
 }
 
 func (w *WrittenMsgEvent) MsgOffset() uint64 {
@@ -18,5 +18,9 @@ func (w *WrittenMsgEvent) MsgOffset() uint64 {
 }
 
 func (w *WrittenMsgEvent) IsSuccess() bool {
-	return w.success
+	return w.err == nil
+}
+
+func (w *WrittenMsgEvent) GetErr() error {
+	return w.err
 }

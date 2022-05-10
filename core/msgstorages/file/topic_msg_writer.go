@@ -613,10 +613,10 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 			return nil
 		}
 
-		notifyWrittenMsgsResult := func(success bool) {
+		notifyWrittenMsgsResult := func(err error) {
 			for msgOffset, ch := range msgOffsetToWrittenEventChMap {
 				ch <- &WrittenMsgEvent{
-					success: success,
+					err: err,
 					msgOffset: msgOffset,
 				}
 			}
@@ -625,11 +625,11 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 		err := w.writeMsgs(ctx, msgs)
 		if err != nil {
 			w.logger.Error(ctx, err)
-			notifyWrittenMsgsResult(false)
+			notifyWrittenMsgsResult(err)
 			return err
 		}
 
-		notifyWrittenMsgsResult(true)
+		notifyWrittenMsgsResult(nil)
 
 		return nil
 	}
