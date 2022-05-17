@@ -40,6 +40,11 @@ type consumerMultiFileHandler struct {
 	finishInit bool
 }
 
+type fileMsgWrapper struct {
+	msg msgstorages.Message
+	fileSeq uint32
+}
+
 type readyConsumeMsgQueue struct {
 
 }
@@ -63,8 +68,10 @@ type consumerMsgController struct {
 	multiFileHandler *consumerMultiFileHandler
 	// 是否消息桶模式
 	isBucketMode bool
-	// 消息通权重分配方式
-	BucketWeight msgstorages.BucketWeight
+	// 消息桶权重分配方式
+	bucketWeight msgstorages.BucketWeight
+	// 消息权重分配方式
+	msgWeight msgstorages.MsgWeight
 	// 是否串行模式
 	isSerialMode bool
 	// 每个桶的并发消费数

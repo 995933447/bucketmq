@@ -41,10 +41,6 @@ func buildDataFileName(topicName, dir, suffixName string, fileSeq string) string
 	return buildMsgFileName(dir, topicName, suffixName, fileSeq)
 }
 
-func buildOffsetFilePrefixName(topicName, consumerGroupName string) string {
-	return topicName + filePrefixNameMiddleSep + consumerGroupName
-}
-
 func calMaxFileSeqFromDir(dir, prefixName, suffixName string) (string, error) {
 	indexFiles, err := ioutil.ReadDir(dir)
 	if err != nil {

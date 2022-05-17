@@ -10,11 +10,15 @@ const (
 )
 
 const (
-	BucketWeightRobin BucketWeight = 1
-	BucketWeightFifo BucketWeight = 2
+	BucketWeightRobin BucketWeight = iota
+	BucketWeightFifo
+
+	MsgWeightPriority MsgWeight = iota
+	MsgWeightCreatedAtWithPriority
 )
 
 type BucketWeight int8
+type MsgWeight int8
 
 type MsgMetadata struct {
 	// 消息入的桶
