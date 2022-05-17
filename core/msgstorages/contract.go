@@ -10,7 +10,7 @@ const (
 )
 
 const (
-	BucketWeightRobin BucketWeight = iota
+	BucketWeightPoll BucketWeight = iota
 	BucketWeightFifo
 
 	MsgWeightPriority MsgWeight = iota
@@ -18,6 +18,7 @@ const (
 )
 
 type BucketWeight int8
+
 type MsgWeight int8
 
 type MsgMetadata struct {

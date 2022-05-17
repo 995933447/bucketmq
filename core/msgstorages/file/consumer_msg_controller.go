@@ -45,8 +45,18 @@ type fileMsgWrapper struct {
 	fileSeq uint32
 }
 
-type readyConsumeMsgQueue struct {
+//　消息桶实例
+type msgBucket struct {
+	msgLists [msgstorages.MaxMsgPriority][]*fileMsgWrapper
+	next *msgBucket
+	prev *msgBucket
+}
 
+type readyConsumeMsgQueue struct {
+	bucketHashTable map[uint32]*msgBucket
+	lastPollBucket *msgBucket
+	headerOfBucketList *msgBucket
+	tailOfBucketList *msgBucket
 }
 
 type delayConsumeMsgQueue struct {
@@ -82,12 +92,12 @@ type consumerMsgController struct {
 	bucketToConcurrentConsumptionMap map[uint32]uint32
 	// 完成消费的位移
 	doneOffsetSet *structs.Uint32Set
-	//
+	// 就绪队列
 	*readyConsumeMsgQueue
-	//
+	//　延时队列
 	*delayConsumeMsgQueue
-	//
+	//　确认完成消息请求的channel
 	doneMsgReqCh chan *doneMsgReq
-	//
+	//　是否已经初始化
 	finishInit bool
 }
