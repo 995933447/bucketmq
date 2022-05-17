@@ -9,12 +9,12 @@ const (
 )
 
 const (
-	indexFileSuffixName = "idx"
-	dataFileSuffixName = "dat"
-	doneFileSuffixName = "don"
-	attemptCntFileSuffixName = "attempt"
-	deadFileSuffixName = "dea"
-	indexOfIndexFileSuffixName = "idxidx"
+	indexFileSuffixName = "index"
+	dataFileSuffixName = "data"
+	doneFileSuffixName = "done"
+	attemptFileSuffixName = "attempt"
+	deadFileSuffixName = "dead"
+	startOffsetCheckFileSuffixName = "start"
 )
 
 const (
@@ -40,5 +40,17 @@ type dataFileWriter struct {
 }
 
 type dataFileReader struct {
+	fp *os.File
+}
+
+type doneFileRWriter struct {
+	fp *os.File
+}
+
+type attemptFileRWriter struct {
+	fp *os.File
+}
+
+type startOffsetCheckFileRWriter struct {
 	fp *os.File
 }

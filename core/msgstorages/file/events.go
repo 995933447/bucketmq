@@ -4,8 +4,8 @@ type nextSeqFilesOpenEvent struct {
 	fileSeq string `access:"r"`
 }
 
-func (s *nextSeqFilesOpenEvent) getFileSeq() string {
-	return s.fileSeq
+func (e *nextSeqFilesOpenEvent) getFileSeq() string {
+	return e.fileSeq
 }
 
 type WrittenMsgEvent struct {
@@ -13,14 +13,14 @@ type WrittenMsgEvent struct {
 	err error `access:"r"`
 }
 
-func (w *WrittenMsgEvent) MsgOffset() uint64 {
-	return w.msgOffset
+func (e *WrittenMsgEvent) MsgOffset() uint64 {
+	return e.msgOffset
 }
 
-func (w *WrittenMsgEvent) IsSuccess() bool {
-	return w.err == nil
+func (e *WrittenMsgEvent) IsSuccess() bool {
+	return e.err == nil
 }
 
-func (w *WrittenMsgEvent) GetErr() error {
-	return w.err
+func (e *WrittenMsgEvent) GetErr() error {
+	return e.err
 }

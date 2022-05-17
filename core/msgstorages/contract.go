@@ -5,6 +5,17 @@ import (
 	"github.com/995933447/bucketmq/core/utils/uniqid"
 )
 
+const (
+	MaxMsgPriority = 3
+)
+
+const (
+	BucketWeightRobin BucketWeight = 1
+	BucketWeightFifo BucketWeight = 2
+)
+
+type BucketWeight int8
+
 type MsgMetadata struct {
 	// 消息入的桶
 	bucket uint32 `access:"r"`
