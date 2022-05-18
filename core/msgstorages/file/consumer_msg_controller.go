@@ -46,20 +46,20 @@ type fileMsgWrapper struct {
 }
 
 //　消息桶实例
-type msgBucket struct {
-	msgLists [msgstorages.MaxMsgPriority][]*fileMsgWrapper
-	next *msgBucket
-	prev *msgBucket
+type bucket struct {
+	msgLists [msgstorages.MaxMsgPriority + 1][]*fileMsgWrapper
+	nextOfBucketList *bucket
+	prevOfBucketList *bucket
 }
 
-type readyConsumeMsgQueue struct {
-	bucketHashTable map[uint32]*msgBucket
-	lastPollBucket *msgBucket
-	headerOfBucketList *msgBucket
-	tailOfBucketList *msgBucket
+type readyMsgQueue struct {
+	bucketHashTable map[uint32]*bucket
+	lastFetchBucket *bucket
+	headerOfBucketList *bucket
+	tailOfBucketList *bucket
 }
 
-type delayConsumeMsgQueue struct {
+type delayMsgQueue struct {
 
 }
 
@@ -93,9 +93,9 @@ type consumerMsgController struct {
 	// 完成消费的位移
 	doneOffsetSet *structs.Uint32Set
 	// 就绪队列
-	*readyConsumeMsgQueue
+	*readyMsgQueue
 	//　延时队列
-	*delayConsumeMsgQueue
+	*delayMsgQueue
 	//　确认完成消息请求的channel
 	doneMsgReqCh chan *doneMsgReq
 	//　是否已经初始化
