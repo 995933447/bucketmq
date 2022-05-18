@@ -77,11 +77,17 @@ type fifoBucketLinkedMap struct {
 type readyMsgQueue struct {
 	// 是否桶模式
 	isBucketMode bool
+	// 是否串行模式
 	isSerialMode bool
+	// 不分桶模式下的消息表
 	notBucketMsgTable *msgTable
+	// 轮询桶模式下的消息表
 	*pollingBucketLinkedMap
+	// 先进先出桶模式下的消息表
 	*fifoBucketLinkedMap
+	// 桶权重方式
 	bucketWeight msgstorages.BucketWeight
+	// 消息权重方式
 	msgWeight msgstorages.MsgWeight
 }
 
