@@ -83,7 +83,19 @@ type readyMsgQueue struct {
 	msgWeight msgstorages.MsgWeight
 }
 
+func (q *readyMsgQueue) pop() *fileMsgWrapper {
+	return nil
+}
+
 type delayMsgQueue skiplist.SkipList
+
+func (q *delayMsgQueue) migrateExpired() {
+	return
+}
+
+func (q *delayMsgQueue) remove(msg *fileMsgWrapper) bool {
+	return false
+}
 
 type doneMsgReq struct {
 	msgOffset uint32
