@@ -55,9 +55,9 @@ type pollingBucket struct {
 	prevOfBucketList *pollingBucket
 }
 
-//　轮询获取消息方式的桶消息哈希表
-type pollingBucketMsgHashTable struct {
-	bucketMsgHashTable map[uint32]*pollingBucket
+//　轮询方式获取消息的桶消息哈希表
+type pollingBucketLinkedMap struct {
+	bucketMap map[uint32]*pollingBucket
 	lastPollingOfBucketList *pollingBucket
 	headerOfBucketList *pollingBucket
 	tailOfBucketList *pollingBucket
@@ -69,16 +69,18 @@ type fifoBucket struct {
 }
 
 //　消息先入先出方式的桶消息哈希表
-type fifoBucketMsgHashTable struct {
-	bucketMsgHashTable map[uint32]*fifoBucket
+type fifoBucketLinkedMap struct {
+	bucketMap map[uint32]*fifoBucket
 	bucketList *skiplist.SkipList
 }
 
 type readyMsgQueue struct {
+	// 是否桶模式
 	isBucketMode bool
+	isSerialMode bool
 	notBucketMsgTable *msgTable
-	*pollingBucketMsgHashTable
-	*fifoBucketMsgHashTable
+	*pollingBucketLinkedMap
+	*fifoBucketLinkedMap
 	bucketWeight msgstorages.BucketWeight
 	msgWeight msgstorages.MsgWeight
 }
