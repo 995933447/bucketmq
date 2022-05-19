@@ -5,10 +5,6 @@ import (
 )
 
 const (
-	globalFirstMsgOffset = 0
-)
-
-const (
 	indexFileSuffixName = "index"
 	dataFileSuffixName = "data"
 	doneFileSuffixName = "done"

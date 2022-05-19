@@ -14,15 +14,15 @@ import (
 )
 
 const (
-	//　默认刷新文件消息数据到磁盘的时间间隔
+	// 默认刷新文件消息数据到磁盘的时间间隔
 	defaultSyncToDiskInterval = time.Second * 5
 )
 
 // topic消息文件处理器
 type topicMultiFileHandler struct {
-	//　索引文件写入处理器
+	// 索引文件写入处理器
 	*indexFileWriter
-	//　数据文件写入处理器
+	// 数据文件写入处理器
 	*dataFileWriter
 	// topic名称
 	topicName string
@@ -32,7 +32,7 @@ type topicMultiFileHandler struct {
 	fileSeq string
 	// 文件创建时间
 	fileSeqCreatedAt uint32
-	//　开始的消息位移
+	// 开始的消息位移
 	firstMsgOffset uint64
 	// 定时冲刷磁盘的时间间隔
 	syncToDiskInterval time.Duration
@@ -40,11 +40,11 @@ type topicMultiFileHandler struct {
 	hasFileCorruption bool
 	// 消息编码器
 	*msgEncoder
-	//　发送有新的写入文件被打开的通知的chan
+	// 发送有新的写入文件被打开的通知的chan
 	nextSeqFilesOpenEventCh chan *nextSeqFilesOpenEvent
-	//　日志
+	// 日志
 	logger log.Logger
-	//　是否初始化完成
+	// 是否初始化完成
 	finishInit bool
 }
 
@@ -133,7 +133,7 @@ func (fh *topicMultiFileHandler) syncToDisk(ctx context.Context) error {
 	return nil
 }
 
-//　检查文件是否被污染
+// 检查文件是否被污染
 func (fh *topicMultiFileHandler) checkForCorruptFiles(ctx context.Context) (bool, error) {
 	indexFileInfo, err := fh.indexFileWriter.fp.Stat()
 	if err != nil {
@@ -162,7 +162,7 @@ func (fh *topicMultiFileHandler) checkForCorruptFiles(ctx context.Context) (bool
 	return false, nil
 }
 
-//　确定可写入文件序号
+// 确定可写入文件序号
 func (fh *topicMultiFileHandler) sureWritableFiles(ctx context.Context) error {
 	if err := fileutil.MkdirIfNotExist(fh.dir); err != nil {
 		fh.logger.Error(ctx, err)
@@ -175,7 +175,7 @@ func (fh *topicMultiFileHandler) sureWritableFiles(ctx context.Context) error {
 			fh.logger.Error(ctx, err)
 			return err
 		}
-		fileSeq = buildFileSeq(time.Now(), globalFirstMsgOffset)
+		fileSeq = buildFileSeq(time.Now(), msgstorages.GlobalFirstMsgOffset)
 	}
 
 	fh.fileSeq = fileSeq
@@ -221,7 +221,7 @@ func (fh *topicMultiFileHandler) sureWritableFiles(ctx context.Context) error {
 	return nil
 }
 
-//　构造数据文件句柄
+// 构造数据文件句柄
 func (fh *topicMultiFileHandler) makeDataFp(ctx context.Context) (*os.File, error) {
 	if err := fh.assetConfirmedWritableFiles(ctx); err != nil {
 		fh.logger.Error(ctx, err)
@@ -325,7 +325,7 @@ func (fh *topicMultiFileHandler) openNextSeqMsgFiles(ctx context.Context) error 
 	return nil
 }
 
-//　检查初始化前结构体不可为空字段
+// 检查初始化前结构体不可为空字段
 func (fh *topicMultiFileHandler) assetRequiredFieldsBeforeInit(ctx context.Context) error {
 	if fh.topicName == "" || fh.logger == nil || fh.syncToDiskInterval <= 0 ||
 		fh.indexFileWriter == nil || fh.dataFileWriter == nil ||
@@ -344,7 +344,7 @@ func (fh *topicMultiFileHandler) assetRequiredFieldsBeforeInit(ctx context.Conte
 	return nil
 }
 
-//　检查结构体是否确认了可写入文件序号
+// 检查结构体是否确认了可写入文件序号
 func (fh *topicMultiFileHandler) assetConfirmedWritableFiles(ctx context.Context) error {
 	if fh.fileSeq != "" || fh.fileSeqCreatedAt > 0 {
 		return nil
@@ -360,7 +360,7 @@ type WriteMsgReq struct {
 	writtenEventChan chan *WrittenMsgEvent
 }
 
-//　topic消息写入处理器
+// topic消息写入处理器
 type topicMsgWriter struct {
 	// topic名称
 	topicName string
@@ -368,17 +368,17 @@ type topicMsgWriter struct {
 	multiFileHandler *topicMultiFileHandler
 	//　进入准备停止事件循环状态,不再写入消息
 	readyStopLoop atomic.Value
-	//　日志组件
+	// 日志组件
 	logger log.Logger `access:"r"`
 	// 接收消息的chan
 	writeMsgReqChan chan *WriteMsgReq `access:"r"`
-	//　接收停止时间循环的信号的chan
+	// 接收停止时间循环的信号的chan
 	stopLoopEventCh chan struct{}
-	//　是否已经完成初始化
+	// 是否已经完成初始化
 	finishInit bool
 }
 
-//　构造函数
+// 构造函数
 func newTopicMsgWriter(
 	ctx context.Context,
 	topicName, baseDir string,
@@ -418,7 +418,7 @@ func newTopicMsgWriter(
 	return writer, nil
 }
 
-//　topic消息处理器初始化工作
+// topic消息处理器初始化工作
 func (w *topicMsgWriter) init(ctx context.Context) error {
 	if w.finishInit {
 		return nil
@@ -441,7 +441,7 @@ func (w *topicMsgWriter) init(ctx context.Context) error {
 	return nil
 }
 
-//　检查初始化前不可为空字段
+// 检查初始化前不可为空字段
 func (w *topicMsgWriter) assetRequiredFieldsBeforeInit(ctx context.Context) error {
 	if w.topicName == "" || w.logger == nil || w.multiFileHandler == nil {
 		var logger log.Logger
@@ -474,7 +474,7 @@ func (w *topicMsgWriter) WriteReqChan() chan *WriteMsgReq {
 	return w.writeMsgReqChan
 }
 
-//　设置日志组件
+// 设置日志组件
 func (w *topicMsgWriter) setLogger(logger log.Logger) error {
 	if logger == nil {
 		err := errdef.NewErr(errdef.ErrCodeArgsInvalid, "expected " + reflect.TypeOf(logger).Name() + ", but nil")
@@ -485,7 +485,7 @@ func (w *topicMsgWriter) setLogger(logger log.Logger) error {
 	return nil
 }
 
-//　批量写入消息
+// 批量写入消息
 func (w *topicMsgWriter) writeMsgs(ctx context.Context, msgs []*msgstorages.Message) error {
 	if w.multiFileHandler.hasFileCorruption {
 		err := errdef.FileCorruptionErr
@@ -573,7 +573,7 @@ func (w *topicMsgWriter) writeMsgs(ctx context.Context, msgs []*msgstorages.Mess
 	return nil
 }
 
-//　事件循环
+// 事件循环
 func (w *topicMsgWriter) loop(ctx context.Context) error {
 	syncToDiskTick := time.NewTicker(w.multiFileHandler.syncToDiskInterval)
 	defer syncToDiskTick.Stop()

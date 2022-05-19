@@ -10,6 +10,10 @@ const (
 )
 
 const (
+	GlobalFirstMsgOffset = 0
+)
+
+const (
 	BucketWeightPoll BucketWeight = iota
 	BucketWeightFifo
 

@@ -1,7 +1,6 @@
 package file
 
 import (
-	"git.pinquest.cn/qlb/extrpkg/github.com/huandu/skiplist"
 	"github.com/995933447/bucketmq/core/log"
 	"github.com/995933447/bucketmq/core/msgstorages"
 	"github.com/995933447/bucketmq/core/utils/structs"
@@ -46,65 +45,6 @@ type fileMsgWrapper struct {
 	fileSeq uint32
 }
 
-type msgTable [msgstorages.MaxMsgPriority + 1][]*fileMsgWrapper
-
-// 用于存放轮询方式获取消息的桶
-type pollingBucket struct {
-	msgTable
-	nextOfBucketList *pollingBucket
-	prevOfBucketList *pollingBucket
-}
-
-// 轮询方式获取消息的桶消息哈希表
-type pollingBucketLinkedMap struct {
-	bucketMap map[uint32]*pollingBucket
-	lastPollingOfBucketList *pollingBucket
-	headerOfBucketList *pollingBucket
-	tailOfBucketList *pollingBucket
-}
-
-// 用于存放消息先入先出方式获取消息的桶
-type fifoBucket struct {
-	msgTable
-}
-
-//　消息先入先出方式的桶消息哈希表
-type fifoBucketLinkedMap struct {
-	bucketMap map[uint32]*fifoBucket
-	bucketList *skiplist.SkipList
-}
-
-type readyMsgQueue struct {
-	// 是否桶模式
-	isBucketMode bool
-	// 是否串行模式
-	isSerialMode bool
-	// 不分桶模式下的消息表
-	notBucketMsgTable *msgTable
-	// 轮询桶模式下的消息表
-	*pollingBucketLinkedMap
-	// 先进先出桶模式下的消息表
-	*fifoBucketLinkedMap
-	// 桶权重方式
-	bucketWeight msgstorages.BucketWeight
-	// 消息权重方式
-	msgWeight msgstorages.MsgWeight
-}
-
-func (q *readyMsgQueue) pop() *fileMsgWrapper {
-	return nil
-}
-
-type delayMsgQueue skiplist.SkipList
-
-func (q *delayMsgQueue) migrateExpired() {
-	return
-}
-
-func (q *delayMsgQueue) remove(msg *fileMsgWrapper) bool {
-	return false
-}
-
 type doneMsgReq struct {
 	msgOffset uint32
 }
@@ -135,7 +75,7 @@ type consumerMsgController struct {
 	// 完成消费的位移
 	doneOffsetSet *structs.Uint32Set
 	// 桶模式就绪队列
-	*readyMsgQueue
+	readyMsgQueue
 	// 延时队列
 	*delayMsgQueue
 	// 确认完成消息请求的channel
