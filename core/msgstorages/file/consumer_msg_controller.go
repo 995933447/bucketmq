@@ -14,13 +14,13 @@ type consumerMsgLoaderPerFileSeq struct {
 	*dataFileReader
 	// 消息消费完成记录文件读写器
 	*doneFileRWriter
-	//　消息消费记录文件读写器
+	// 消息消费记录文件读写器
 	*attemptFileRWriter
-	//　消息文件序号
+	// 消息文件序号
 	fileSeq string
 	// 文件创建时间
 	fileSeqCreatedAt uint32
-	//　开始的消息位移
+	// 开始的消息位移
 	firstMsgOffset uint64
 }
 
@@ -31,13 +31,13 @@ type consumerMultiFileHandler struct {
 	*startOffsetCheckFileRWriter
 	// 预加载多少消息文件序号
 	NumOfPreloadMsgFileSeqs uint32
-	//　文件目录
+	// 文件目录
 	dir string
-	//　消息编码器
+	// 消息编码器
 	*msgEncoder
-	//　日志
+	// 日志
 	logger log.Logger
-	//　是否初始化完成
+	// 是否初始化完成
 	finishInit bool
 }
 
@@ -55,7 +55,7 @@ type pollingBucket struct {
 	prevOfBucketList *pollingBucket
 }
 
-//　轮询方式获取消息的桶消息哈希表
+// 轮询方式获取消息的桶消息哈希表
 type pollingBucketLinkedMap struct {
 	bucketMap map[uint32]*pollingBucket
 	lastPollingOfBucketList *pollingBucket
@@ -136,10 +136,10 @@ type consumerMsgController struct {
 	doneOffsetSet *structs.Uint32Set
 	// 桶模式就绪队列
 	*readyMsgQueue
-	//　延时队列
+	// 延时队列
 	*delayMsgQueue
-	//　确认完成消息请求的channel
+	// 确认完成消息请求的channel
 	doneMsgReqCh chan *doneMsgReq
-	//　是否已经初始化
+	// 是否已经初始化
 	finishInit bool
 }
