@@ -78,6 +78,8 @@ func (m *MsgDataPayload) GetData() []byte {
 type Message struct {
 	metadata *MsgMetadata `access:"r"`
 	dataPayload *MsgDataPayload `access:"r"`
+	RetryCnt uint32
+	ExpectRetryAt uint32
 }
 
 type NewMsgReq struct {

@@ -49,7 +49,7 @@ type doneMsgReq struct {
 	msgOffset uint32
 }
 
-type consumerMsgController struct {
+type consumerMsgCtrl struct {
 	// topic名称
 	topicName string
 	// 消费组名称
@@ -78,6 +78,8 @@ type consumerMsgController struct {
 	readyMsgQueue
 	// 延时队列
 	*delayMsgQueue
+	// 保留队列
+	reserveMsgQueue *delayMsgQueue
 	// 确认完成消息请求的channel
 	doneMsgReqCh chan *doneMsgReq
 	// 是否已经初始化
