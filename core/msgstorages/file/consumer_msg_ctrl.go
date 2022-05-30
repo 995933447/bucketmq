@@ -78,8 +78,6 @@ type consumerMsgCtrl struct {
 	readyMsgQueue
 	// 延时队列
 	*delayMsgQueue
-	// 保留队列
-	reserveMsgQueue *delayMsgQueue
 	// 确认完成消息请求的channel
 	doneMsgReqCh chan *doneMsgReq
 	// 是否已经初始化

@@ -1,9 +1,10 @@
 package file
 
 import (
-	"github.com/995933447/bucketmq/core/msgstorages"
-	"github.com/huandu/skiplist"
 	"container/heap"
+	"github.com/995933447/bucketmq/core/msgstorages"
+	errdef "github.com/995933447/bucketmqerrdef"
+	"github.com/huandu/skiplist"
 	"time"
 )
 
@@ -17,6 +18,87 @@ func (m msgTable) len() uint32 {
 		totalMsgNum += uint32(len(msgList))
 	}
 	return totalMsgNum
+}
+
+func (m *msgTable) push(msgItem *fileMsgWrapper) {
+	var(
+		msgPriority = msgItem.msg.GetMetadata().GetPriority()
+		msgList = m[msgPriority]
+	)
+	if msgList == nil {
+		m[msgPriority] = []*fileMsgWrapper{msgItem}
+		return
+	}
+
+	m[msgPriority] = append(msgList, msgItem)
+}
+
+func (m *msgTable) pop(msgWeight msgstorages.MsgWeight) (*fileMsgWrapper, error) {
+	switch msgWeight {
+		case msgstorages.MsgWeightPriority:
+			for i := msgstorages.MaxMsgPriority; i <= 0; i-- {
+				var (
+					msgList = m[i]
+					msgListLen = len(m)
+				)
+
+				if len(msgList) == 0 {
+					continue
+				}
+
+				msgItem := msgList[0]
+
+				if msgListLen > 1 {
+					msgList = msgList[1:]
+				} else {
+					msgList = nil
+				}
+
+				return msgItem, nil
+			}
+	case msgstorages.MsgWeightCreatedAtWithPriority:
+			var bestMsgItem *fileMsgWrapper
+
+			for i := msgstorages.MaxMsgPriority; i <= 0; i-- {
+				var (
+					msgList = m[i]
+					msgListLen = len(msgList)
+				)
+
+				if len(msgList) == 0 {
+					continue
+				}
+
+				msgItem := msgList[0]
+
+				if msgListLen > 1 {
+					msgList = msgList[1:]
+				} else {
+					msgList = nil
+				}
+
+				if bestMsgItem == nil {
+					bestMsgItem = msgItem
+					continue
+				}
+
+				if bestMsgItem.msg.GetMetadata().GetExpireAt() < msgItem.msg.GetMetadata().GetCreatedAt() {
+					continue
+				}
+
+				bestMsgItem = msgItem
+			}
+
+			if bestMsgItem == nil {
+				break
+			}
+
+			return bestMsgItem, nil
+		default:
+			return nil, errdef.NewErr(errdef.ErrCodeArgsInvalid, "not support msg weight.")
+	}
+
+	return nil, nil
 }
 
 // 用于存放轮询方式获取消息的桶
@@ -71,7 +153,7 @@ type readyMsgQueue interface {
 type pollBucketLinkedMap struct {
 	bucketMap map[uint32]*pollBucket
 	headerOfBucketList *pollBucket
-	lastPolledOfBucketList *pollBucket
+	lastPollOfBucketList *pollBucket
 	tailOfBucketList *pollBucket
 	isSerialMode bool
 	msgWeight msgstorages.MsgWeight
@@ -85,13 +167,13 @@ func newPollBucketLinkedMap(isSerialMode bool, msgWeight msgstorages.MsgWeight) 
 	}
 }
 
-func (m *pollBucketLinkedMap) pop() *fileMsgWrapper {
+func (m *pollBucketLinkedMap) pop() (*fileMsgWrapper) {
 	var startPoll *pollBucket
 
 	for {
 		var polling *pollBucket
-		if m.lastPolledOfBucketList.nextOfBucketList != nil {
-			polling = m.lastPolledOfBucketList.nextOfBucketList
+		if m.lastPollOfBucketList.nextOfBucketList != nil {
+			polling = m.lastPollOfBucketList.nextOfBucketList
 		} else {
 			polling = m.headerOfBucketList
 		}
@@ -108,77 +190,16 @@ func (m *pollBucketLinkedMap) pop() *fileMsgWrapper {
 				continue
 			}
 
-			m.lastPolledOfBucketList = polling
+			m.lastPollOfBucketList = polling
 			return retryItem.msgItem
 		}
 
-		if polling.msgTable.len() == 0 {
-			continue
+		msgItem, err := polling.msgTable.pop(m.msgWeight)
+		if err != nil {
+			panic(err)
 		}
 
-		switch m.msgWeight {
-			case msgstorages.MsgWeightPriority:
-				for i := msgstorages.MaxMsgPriority; i <= 0; i-- {
-					var (
-						msgList = polling.msgTable[i]
-						msgListLen = len(msgList)
-					)
-
-					if len(msgList) == 0 {
-						continue
-					}
-
-					msgItem := msgList[0]
-
-					if msgListLen > 1 {
-						msgList = msgList[1:]
-					} else {
-						msgList = nil
-					}
-
-					m.lastPolledOfBucketList = polling
-					return msgItem
-				}
-			case msgstorages.MsgWeightCreatedAtWithPriority:
-				var mostMatchMsgItem *fileMsgWrapper
-
-				for i := msgstorages.MaxMsgPriority; i <= 0; i-- {
-					var (
-						msgList = polling.msgTable[i]
-						msgListLen = len(msgList)
-					)
-
-					if len(msgList) == 0 {
-						continue
-					}
-
-					msgItem := msgList[0]
-
-					if msgListLen > 1 {
-						msgList = msgList[1:]
-					} else {
-						msgList = nil
-					}
-
-					if mostMatchMsgItem == nil {
-						mostMatchMsgItem = msgItem
-						continue
-					}
-
-					if mostMatchMsgItem.msg.GetMetadata().GetExpireAt() < msgItem.msg.GetMetadata().GetCreatedAt() {
-						continue
-					}
-
-					mostMatchMsgItem = msgItem
-				}
-
-				if mostMatchMsgItem == nil {
-					break
-				}
-
-				m.lastPolledOfBucketList = polling
-				return mostMatchMsgItem
-		}
+		return msgItem
 	}
 
 	return nil

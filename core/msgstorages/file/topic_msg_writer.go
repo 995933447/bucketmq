@@ -36,20 +36,18 @@ type topicMultiFileHandler struct {
 	firstMsgOffset uint64
 	// 定时冲刷磁盘的时间间隔
 	syncToDiskInterval time.Duration
-	//　消息文件是否被污染
+	// 消息文件是否被污染
 	hasFileCorruption bool
 	// 消息编码器
 	*msgEncoder
 	// 发送有新的写入文件被打开的通知的chan
 	nextSeqFilesOpenEventCh chan *nextSeqFilesOpenEvent
-	// 日志
-	logger log.Logger
 	// 是否初始化完成
 	finishInit bool
 }
 
 // 构造函数
-func newTopicMultiFileHandler(topicName, dir string, maxWritableMsgNum, maxWritableMsgDataBytes uint32, syncToDiskInterval time.Duration, logger log.Logger) *topicMultiFileHandler {
+func newTopicMultiFileHandler(topicName, dir string, maxWritableMsgNum, maxWritableMsgDataBytes uint32, syncToDiskInterval time.Duration) *topicMultiFileHandler {
 	return &topicMultiFileHandler{
 		topicName: topicName,
 		dir: dir,
@@ -60,52 +58,43 @@ func newTopicMultiFileHandler(topicName, dir string, maxWritableMsgNum, maxWrita
 			maxWritableDataBytes: maxWritableMsgDataBytes,
 		},
 		syncToDiskInterval: syncToDiskInterval,
-		logger: logger,
 	}
 }
 
 // 文件写入处理器包装器初始化工作
-func (fh *topicMultiFileHandler) init(ctx context.Context) error {
+func (fh *topicMultiFileHandler) init() error {
 	if fh.finishInit {
 		return nil
 	}
 
-	if err := fh.assetRequiredFieldsBeforeInit(ctx); err != nil {
-		fh.logger.Error(ctx, err)
+	if err := fh.assetRequiredFieldsBeforeInit(); err != nil {
 		return err
 	}
 
-	if err := fh.sureWritableFiles(ctx); err != nil {
-		fh.logger.Error(ctx, err)
+	if err := fh.sureWritableFiles(); err != nil {
 		return err
 	}
 
-	indexFp, err := fh.makeIndexFp(ctx)
+	indexFp, err := fh.makeIndexFp()
 	if err != nil {
-		fh.logger.Error(ctx, err)
 		return err
 	}
 	indexFileInfo, err := indexFp.Stat()
 	if err != nil {
-		fh.logger.Error(ctx, err)
 		return err
 	}
 	writtenIndexBytes := indexFileInfo.Size()
 	if writtenIndexBytes % indexBufSize > 0 {
 		fh.hasFileCorruption = true
-		err = errdef.FileCorruptionErr
-		fh.logger.Error(ctx, err)
-		return err
+		return  errdef.FileCorruptionErr
 	}
 
-	dataFp, err := fh.makeDataFp(ctx)
+	dataFp, err := fh.makeDataFp()
 	if err != nil {
-		fh.logger.Error(ctx, err)
 		return err
 	}
 	dataFileInfo, err := dataFp.Stat()
 	if err != nil {
-		fh.logger.Error(ctx, err)
 		return err
 	}
 
@@ -121,23 +110,20 @@ func (fh *topicMultiFileHandler) init(ctx context.Context) error {
 }
 
 // 同步文件消息数据到磁盘
-func (fh *topicMultiFileHandler) syncToDisk(ctx context.Context) error {
+func (fh *topicMultiFileHandler) syncToDisk() error {
 	if err := fh.indexFileWriter.fp.Sync(); err != nil {
-		fh.logger.Error(ctx, err)
 		return err
 	}
 	if err := fh.dataFileWriter.fp.Sync(); err != nil {
-		fh.logger.Error(ctx, err)
 		return err
 	}
 	return nil
 }
 
 // 检查文件是否被污染
-func (fh *topicMultiFileHandler) checkForCorruptFiles(ctx context.Context) (bool, error) {
+func (fh *topicMultiFileHandler) checkForCorruptFiles() (bool, error) {
 	indexFileInfo, err := fh.indexFileWriter.fp.Stat()
 	if err != nil {
-		fh.logger.Error(ctx, err)
 		return false, err
 	}
 
@@ -148,7 +134,6 @@ func (fh *topicMultiFileHandler) checkForCorruptFiles(ctx context.Context) (bool
 
 	dataFileInfo, err := fh.dataFileWriter.fp.Stat()
 	if err != nil {
-		fh.logger.Error(ctx, err)
 		return false, err
 	}
 
@@ -163,16 +148,14 @@ func (fh *topicMultiFileHandler) checkForCorruptFiles(ctx context.Context) (bool
 }
 
 // 确定可写入文件序号
-func (fh *topicMultiFileHandler) sureWritableFiles(ctx context.Context) error {
+func (fh *topicMultiFileHandler) sureWritableFiles() error {
 	if err := fileutil.MkdirIfNotExist(fh.dir); err != nil {
-		fh.logger.Error(ctx, err)
 		return err
 	}
 
 	fileSeq, err := calMaxFileSeqFromDir(fh.dir, fh.topicName, indexFileSuffixName)
 	if err != nil {
 		if err != errdef.FileSeqNotFoundErr {
-			fh.logger.Error(ctx, err)
 			return err
 		}
 		fileSeq = buildFileSeq(time.Now(), msgstorages.GlobalFirstMsgOffset)
@@ -181,7 +164,6 @@ func (fh *topicMultiFileHandler) sureWritableFiles(ctx context.Context) error {
 	fh.fileSeq = fileSeq
 
 	if fh.fileSeqCreatedAt, fh.firstMsgOffset, err = parseCreatedAtAndFirstMsgOffsetFromSeq(fileSeq); err != nil {
-		fh.logger.Error(ctx, err)
 		return err
 	}
 
@@ -191,28 +173,23 @@ func (fh *topicMultiFileHandler) sureWritableFiles(ctx context.Context) error {
 		indexFileSize := indexFileInfo.Size()
 		if indexFileSize % indexBufSize > 0 {
 			fh.hasFileCorruption = true
-			err = errdef.FileCorruptionErr
-			fh.logger.Error(ctx, err)
-			return err
+			return errdef.FileCorruptionErr
 		}
 		fh.writtenIndexNum = uint32(indexFileSize / indexFileSize)
 
 		dataFileName := buildDataFileName(fh.topicName, fh.dir, dataFileSuffixName, fileSeq)
 		dataFileInfo, err := os.Stat(dataFileName)
 		if err != nil {
-			fh.logger.Error(ctx, err)
 			return err
 		}
 		fh.dataFileWriter.writtenDataBytes = uint32(dataFileInfo.Size())
 
 		if fh.writtenIndexNum >= fh.indexFileWriter.maxWritableIndexNum || fh.writtenDataBytes >= fh.maxWritableDataBytes {
-			if err = fh.openNextSeqMsgFiles(ctx); err != nil {
-				fh.logger.Error(ctx, err)
+			if err = fh.openNextSeqMsgFiles(); err != nil {
 				return err
 			}
 		}
 	} else if !os.IsNotExist(err) {
-		fh.logger.Error(ctx, err)
 		return err
 	}
 
@@ -222,21 +199,18 @@ func (fh *topicMultiFileHandler) sureWritableFiles(ctx context.Context) error {
 }
 
 // 构造数据文件句柄
-func (fh *topicMultiFileHandler) makeDataFp(ctx context.Context) (*os.File, error) {
-	if err := fh.assetConfirmedWritableFiles(ctx); err != nil {
-		fh.logger.Error(ctx, err)
+func (fh *topicMultiFileHandler) makeDataFp() (*os.File, error) {
+	if err := fh.assetConfirmedWritableFiles(); err != nil {
 		return nil, err
 	}
 
 	if err := fileutil.MkdirIfNotExist(fh.dir); err != nil {
-		fh.logger.Error(ctx, err)
 		return nil, err
 	}
 
 	fileName := buildDataFileName(fh.topicName, fh.dir, dataFileSuffixName, fh.fileSeq)
 	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
-		fh.logger.Error(ctx, err)
 		return nil, err
 	}
 
@@ -244,14 +218,12 @@ func (fh *topicMultiFileHandler) makeDataFp(ctx context.Context) (*os.File, erro
 }
 
 // 构造索引文件句柄
-func (fh *topicMultiFileHandler) makeIndexFp(ctx context.Context) (*os.File, error) {
-	if err := fh.assetConfirmedWritableFiles(ctx); err != nil {
-		fh.logger.Error(ctx, err)
+func (fh *topicMultiFileHandler) makeIndexFp() (*os.File, error) {
+	if err := fh.assetConfirmedWritableFiles(); err != nil {
 		return nil, err
 	}
 
 	if err := fileutil.MkdirIfNotExist(fh.dir); err != nil {
-		fh.logger.Error(ctx, err)
 		return nil, err
 	}
 
@@ -267,47 +239,40 @@ func (fh *topicMultiFileHandler) makeIndexFp(ctx context.Context) (*os.File, err
 	}
 
 	if fileInfo.IsDir() {
-		err = errdef.FileIsNotRegularFileErr
-		fh.logger.Error(ctx, err)
-		return nil, err
+		return nil, errdef.FileIsNotRegularFileErr
 	}
 
 	return fp, nil
 }
 
 // 打开下个可写入消息文件序号
-func (fh *topicMultiFileHandler) openNextSeqMsgFiles(ctx context.Context) error {
+func (fh *topicMultiFileHandler) openNextSeqMsgFiles() error {
 	firstMsgOffsetOfNewFileSeq := fh.firstMsgOffset + uint64(fh.writtenIndexNum)
 	newFileSeqCreatedAt := time.Now()
 	fh.fileSeq = buildFileSeq(newFileSeqCreatedAt, firstMsgOffsetOfNewFileSeq)
 	fh.firstMsgOffset = firstMsgOffsetOfNewFileSeq
 	fh.fileSeqCreatedAt = uint32(newFileSeqCreatedAt.Unix())
 
-	indexFp, err := fh.makeIndexFp(ctx)
+	indexFp, err := fh.makeIndexFp()
 	if err != nil {
 		return err
 	}
 	indexFileInfo, err := indexFp.Stat()
 	if err != nil {
-		fh.logger.Error(ctx, err)
 		return err
 	}
 	writtenIndexBytes := indexFileInfo.Size()
 	if writtenIndexBytes % indexBufSize > 0 {
 		fh.hasFileCorruption = true
-		err = errdef.FileCorruptionErr
-		fh.logger.Error(ctx, err)
-		return err
+		return errdef.FileCorruptionErr
 	}
 
-	dataFp, err := fh.makeDataFp(ctx)
+	dataFp, err := fh.makeDataFp()
 	if err != nil {
-		fh.logger.Error(ctx, err)
 		return err
 	}
 	dataFileInfo, err := dataFp.Stat()
 	if err != nil {
-		fh.logger.Error(ctx, err)
 		return err
 	}
 
@@ -326,33 +291,23 @@ func (fh *topicMultiFileHandler) openNextSeqMsgFiles(ctx context.Context) error 
 }
 
 // 检查初始化前结构体不可为空字段
-func (fh *topicMultiFileHandler) assetRequiredFieldsBeforeInit(ctx context.Context) error {
-	if fh.topicName == "" || fh.logger == nil || fh.syncToDiskInterval <= 0 ||
+func (fh *topicMultiFileHandler) assetRequiredFieldsBeforeInit() error {
+	if fh.topicName == "" || fh.syncToDiskInterval <= 0 ||
 		fh.indexFileWriter == nil || fh.dataFileWriter == nil ||
 		fh.indexFileWriter.maxWritableIndexNum == 0 || fh.maxWritableDataBytes == 0 || fh.dir == "" {
-		var logger log.Logger
-		if fh.logger == nil {
-			logger = log.DefaultLogger
-		} else {
-			logger = fh.logger
-		}
-		err := errdef.MadeStructNotByNewFuncErr
-		logger.Error(ctx, err)
-		return err
+		return errdef.MadeStructNotByNewFuncErr
 	}
 
 	return nil
 }
 
 // 检查结构体是否确认了可写入文件序号
-func (fh *topicMultiFileHandler) assetConfirmedWritableFiles(ctx context.Context) error {
+func (fh *topicMultiFileHandler) assetConfirmedWritableFiles() error {
 	if fh.fileSeq != "" || fh.fileSeqCreatedAt > 0 {
 		return nil
 	}
 
-	err := errdef.NewErr(errdef.ErrCodeAssetStructFailed, "must call *topicMsgWriter.ConfirmWritableFiles(context.Context) to confirm writable files.")
-	fh.logger.Error(ctx, err)
-	return err
+	return errdef.NewErr(errdef.ErrCodeAssetStructFailed, "must call *topicMsgWriter.ConfirmWritableFiles(context.Context) to confirm writable files.")
 }
 
 type WriteMsgReq struct {
@@ -380,7 +335,6 @@ type topicMsgWriter struct {
 
 // 构造函数
 func newTopicMsgWriter(
-	ctx context.Context,
 	topicName, baseDir string,
 	maxWritableMsgNum, maxWritableMsgDataBytes uint32,
 	syncToDiskInterval time.Duration,
@@ -388,9 +342,7 @@ func newTopicMsgWriter(
 
 	) (*topicMsgWriter, error) {
 	if logger == nil {
-		err := errdef.NewErr(errdef.ErrCodeArgsInvalid, "logger is nil")
-		log.DefaultLogger.Error(ctx, err)
-		return nil, err
+		return nil, errdef.NewErr(errdef.ErrCodeArgsInvalid, "logger is nil")
 	}
 
 	if syncToDiskInterval == 0 {
@@ -406,12 +358,10 @@ func newTopicMsgWriter(
 			 maxWritableMsgNum,
 			 maxWritableMsgDataBytes,
 			 syncToDiskInterval,
-			 logger,
 		),
 	}
 
-	if err := writer.init(ctx); err != nil {
-		logger.Error(ctx, err)
+	if err := writer.init(); err != nil {
 		return nil, err
 	}
 
@@ -419,18 +369,16 @@ func newTopicMsgWriter(
 }
 
 // topic消息处理器初始化工作
-func (w *topicMsgWriter) init(ctx context.Context) error {
+func (w *topicMsgWriter) init() error {
 	if w.finishInit {
 		return nil
 	}
 
-	if err := w.assetRequiredFieldsBeforeInit(ctx); err != nil {
-		w.logger.Error(ctx, err)
+	if err := w.assetRequiredFieldsBeforeInit(); err != nil {
 		return err
 	}
 
-	if err := w.multiFileHandler.init(ctx); err != nil {
-		w.logger.Error(ctx, err)
+	if err := w.multiFileHandler.init(); err != nil {
 		return err
 	}
 
@@ -442,17 +390,9 @@ func (w *topicMsgWriter) init(ctx context.Context) error {
 }
 
 // 检查初始化前不可为空字段
-func (w *topicMsgWriter) assetRequiredFieldsBeforeInit(ctx context.Context) error {
+func (w *topicMsgWriter) assetRequiredFieldsBeforeInit() error {
 	if w.topicName == "" || w.logger == nil || w.multiFileHandler == nil {
-		var logger log.Logger
-		if w.logger == nil {
-			logger = log.DefaultLogger
-		} else {
-			logger = w.logger
-		}
-		err := errdef.MadeStructNotByNewFuncErr
-		logger.Error(ctx, err)
-		return err
+		return errdef.MadeStructNotByNewFuncErr
 	}
 	return nil
 }
@@ -481,15 +421,13 @@ func (w *topicMsgWriter) setLogger(logger log.Logger) error {
 		return err
 	}
 	w.logger = logger
-	w.multiFileHandler.logger = logger
 	return nil
 }
 
 // 批量写入消息
-func (w *topicMsgWriter) writeMsgs(ctx context.Context, msgs []*msgstorages.Message) error {
+func (w *topicMsgWriter) writeMsgs(msgs []*msgstorages.Message) error {
 	if w.multiFileHandler.hasFileCorruption {
 		err := errdef.FileCorruptionErr
-		w.logger.Error(ctx, err)
 		return err
 	}
 
@@ -564,8 +502,7 @@ func (w *topicMsgWriter) writeMsgs(ctx context.Context, msgs []*msgstorages.Mess
 			continue
 		}
 
-		if err := w.multiFileHandler.openNextSeqMsgFiles(ctx); err != nil {
-			w.logger.Error(ctx, err)
+		if err := w.multiFileHandler.openNextSeqMsgFiles(); err != nil {
 			return err
 		}
 	}
@@ -643,9 +580,8 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 			}
 		}
 
-		err := w.writeMsgs(ctx, msgClones)
+		err := w.writeMsgs(msgClones)
 		if err != nil {
-			w.logger.Error(ctx, err)
 			go notifyWrittenMsgsResult(err)
 			return err
 		}
@@ -663,31 +599,20 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 				}
 				err := writeMsgsAsPossible(writeMsgReq)
 				if err != nil {
-					w.logger.Error(ctx, err)
 					return err
 				}
 			case <- syncToDiskTick.C:
-				var (
-					hasFileCorruption bool
-					err error
-				)
-				if hasFileCorruption, err = w.multiFileHandler.checkForCorruptFiles(ctx); err != nil {
-					w.logger.Error(ctx, err)
+				if hasFileCorruption, err := w.multiFileHandler.checkForCorruptFiles(); err != nil {
 					return err
 				} else if hasFileCorruption {
-					err =  errdef.FileCorruptionErr
-					w.logger.Error(ctx, err)
-					return err
-				} else {
-					if err = w.multiFileHandler.syncToDisk(ctx); err != nil {
-						w.logger.Warn(ctx, err)
-					}
+					return errdef.FileCorruptionErr
+				} else if err = w.multiFileHandler.syncToDisk(); err != nil {
+					w.logger.Warn(ctx, err)
 				}
 			case <- w.stopLoopEventCh:
 				w.readyToStopLoop()
 				err := writeMsgsAsPossible(nil)
 				if err != nil {
-					w.logger.Error(ctx, err)
 					return err
 				}
 				return nil
