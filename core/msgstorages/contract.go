@@ -40,6 +40,10 @@ type MsgMetadata struct {
 	msgId string `access:"r"`
 	// 全局消息位移
 	MsgOffset uint64 `access:"rw"`
+	// 重试次数
+	RetryCnt uint32
+	// 期望重试时间
+	ExpectRetryAt uint32
 }
 
 func (m *MsgMetadata) GetMsgId() string {
@@ -78,8 +82,6 @@ func (m *MsgDataPayload) GetData() []byte {
 type Message struct {
 	metadata *MsgMetadata `access:"r"`
 	dataPayload *MsgDataPayload `access:"r"`
-	RetryCnt uint32
-	ExpectRetryAt uint32
 }
 
 type NewMsgReq struct {

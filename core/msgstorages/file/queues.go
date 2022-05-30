@@ -123,6 +123,24 @@ func (p *pollBucket) len() uint32 {
 	return totalMsgNum
 }
 
+func (p *pollBucket) pop(msgWeight msgstorages.MsgWeight) *fileMsgWrapper {
+	if p.serialRetryMsgQueue != nil && p.serialRetryMsgQueue.Len() > 0 {
+		retryItem := p.popRetry()
+		if retryItem == nil {
+			return nil
+		}
+
+		return retryItem.msgItem
+	}
+
+	msgItem, err := p.msgTable.pop(msgWeight)
+	if err != nil {
+		panic(err)
+	}
+
+	return msgItem
+}
+
 // 用于存放消息先入先出方式获取消息的桶
 type fifoBucket struct {
 	msgTable
@@ -167,36 +185,28 @@ func newPollBucketLinkedMap(isSerialMode bool, msgWeight msgstorages.MsgWeight) 
 	}
 }
 
-func (m *pollBucketLinkedMap) pop() (*fileMsgWrapper) {
+func (m *pollBucketLinkedMap) pop() *fileMsgWrapper {
 	var startPoll *pollBucket
 
 	for {
 		var polling *pollBucket
-		if m.lastPollOfBucketList.nextOfBucketList != nil {
+		if m.lastPollOfBucketList != nil && m.lastPollOfBucketList.nextOfBucketList != nil {
 			polling = m.lastPollOfBucketList.nextOfBucketList
 		} else {
 			polling = m.headerOfBucketList
 		}
+
+		m.lastPollOfBucketList = polling
 
 		if startPoll == nil {
 			startPoll = polling
 		} else if polling == startPoll {
 			break
 		}
-		
-		if m.isSerialMode && polling.serialRetryMsgQueue != nil && polling.serialRetryMsgQueue.Len() > 0 {
-			retryItem := polling.popRetry()
-			if retryItem == nil {
-				continue
-			}
 
-			m.lastPollOfBucketList = polling
-			return retryItem.msgItem
-		}
-
-		msgItem, err := polling.msgTable.pop(m.msgWeight)
-		if err != nil {
-			panic(err)
+		msgItem := polling.pop(m.msgWeight)
+		if msgItem == nil {
+			continue
 		}
 
 		return msgItem
@@ -294,14 +304,14 @@ func (q *serialRetryMsgQueue) popRetry() *serialRetryMsgQueueItem {
 	if len(*q) == 0 {
 		return nil
 	}
-	if (*q)[0].msgItem.msg.ExpectRetryAt < uint32(time.Now().Unix()) {
+	if (*q)[0].msgItem.msg.GetMetadata().ExpectRetryAt < uint32(time.Now().Unix()) {
 		return nil
 	}
 	return heap.Pop(q).(*serialRetryMsgQueueItem)
 }
 
 func (q *serialRetryMsgQueue) pushRetry(retry *serialRetryMsgQueueItem) {
-	if retry.msgItem == nil || retry.msgItem.msg.ExpectRetryAt == 0 {
+	if retry.msgItem == nil || retry.msgItem.msg.GetMetadata().ExpectRetryAt == 0 {
 		return
 	}
 	heap.Push(q, retry)
@@ -318,7 +328,7 @@ func (q serialRetryMsgQueue) Swap(i, j int) {
 }
 
 func (q serialRetryMsgQueue) Less(i, j int) bool  {
-	return q[i].msgItem.msg.ExpectRetryAt < q[j].msgItem.msg.ExpectRetryAt
+	return q[i].msgItem.msg.GetMetadata().ExpectRetryAt < q[j].msgItem.msg.GetMetadata().ExpectRetryAt
 }
 
 func (q *serialRetryMsgQueue) Push(x interface{}) {
