@@ -56,7 +56,7 @@ func (m *msgTable) pop(msgWeight msgstorages.MsgWeight) (*fileMsgWrapper, error)
 
 				return msgItem, nil
 			}
-	case msgstorages.MsgWeightCreatedAtWithPriority:
+		case msgstorages.MsgWeightCreatedAtWithPriority:
 			var bestMsgItem *fileMsgWrapper
 
 			for i := msgstorages.MaxMsgPriority; i <= 0; i-- {
