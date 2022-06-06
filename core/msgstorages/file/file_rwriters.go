@@ -5,24 +5,24 @@ import (
 )
 
 const (
-	indexFileSuffixName = "index"
-	dataFileSuffixName = "data"
-	doneFileSuffixName = "done"
-	attemptFileSuffixName = "attempt"
-	deadFileSuffixName = "dead"
+	indexFileSuffixName            = "index"
+	dataFileSuffixName             = "data"
+	doneFileSuffixName             = "done"
+	attemptFileSuffixName          = "attempt"
+	deadFileSuffixName             = "dead"
 	startOffsetCheckFileSuffixName = "start"
 )
 
 const (
-	filePrefixNameSep = "."
+	filePrefixNameSep       = "."
 	filePrefixNameMiddleSep = "."
-	fileSeqMiddleSep = "-"
+	fileSeqMiddleSep        = "-"
 )
 
 type indexFileWriter struct {
-	fp *os.File
+	fp                  *os.File
 	maxWritableIndexNum uint32
-	writtenIndexNum uint32
+	writtenIndexNum     uint32
 }
 
 type indexFileReader struct {
@@ -30,9 +30,9 @@ type indexFileReader struct {
 }
 
 type dataFileWriter struct {
-	fp *os.File
+	fp                   *os.File
 	maxWritableDataBytes uint32
-	writtenDataBytes uint32
+	writtenDataBytes     uint32
 }
 
 type dataFileReader struct {

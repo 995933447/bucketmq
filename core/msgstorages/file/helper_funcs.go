@@ -1,6 +1,5 @@
 package file
 
-
 import (
 	"github.com/995933447/bucketmq/core/utils/timeutil"
 	errdef "github.com/995933447/bucketmqerrdef"
@@ -11,17 +10,17 @@ import (
 )
 
 func trimPreSuffixToParseFileSeq(fileName, prefixName, suffixName string) (string, error) {
-	if !strings.HasPrefix(fileName, prefixName + filePrefixNameSep) {
+	if !strings.HasPrefix(fileName, prefixName+filePrefixNameSep) {
 		return "", errdef.FileSeqNotFoundErr
 	}
 	suffixPos := strings.LastIndex(fileName, ".")
 	if suffixPos == -1 {
 		return "", errdef.FileSeqNotFoundErr
 	}
-	if fileSuffixName := fileName[suffixPos + 1:]; fileSuffixName != suffixName {
+	if fileSuffixName := fileName[suffixPos+1:]; fileSuffixName != suffixName {
 		return "", errdef.FileSeqNotFoundErr
 	}
-	seq := fileName[len(prefixName) + 1:suffixPos]
+	seq := fileName[len(prefixName)+1 : suffixPos]
 	if !strings.Contains(seq, fileSeqMiddleSep) {
 		return "", errdef.FileSeqNotFoundErr
 	}

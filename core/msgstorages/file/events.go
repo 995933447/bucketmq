@@ -10,7 +10,7 @@ func (e *nextSeqFilesOpenEvent) getFileSeq() string {
 
 type WrittenMsgEvent struct {
 	msgOffset uint64 `access:"r"`
-	err error `access:"r"`
+	err       error  `access:"r"`
 }
 
 func (e *WrittenMsgEvent) MsgOffset() uint64 {

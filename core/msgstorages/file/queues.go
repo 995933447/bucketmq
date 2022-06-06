@@ -21,9 +21,9 @@ func (m msgTable) len() uint32 {
 }
 
 func (m *msgTable) push(msgItem *fileMsgWrapper) {
-	var(
+	var (
 		msgPriority = msgItem.msg.GetMetadata().GetPriority()
-		msgList = m[msgPriority]
+		msgList     = m[msgPriority]
 	)
 	if msgList == nil {
 		m[msgPriority] = []*fileMsgWrapper{msgItem}
@@ -35,105 +35,100 @@ func (m *msgTable) push(msgItem *fileMsgWrapper) {
 
 func (m *msgTable) pop(msgWeight msgstorages.MsgWeight) (*fileMsgWrapper, error) {
 	switch msgWeight {
-		case msgstorages.MsgWeightPriority:
-			for i := msgstorages.MaxMsgPriority; i <= 0; i-- {
-				var (
-					msgList = m[i]
-					msgListLen = len(m)
-				)
+	case msgstorages.MsgWeightPriority:
+		for i := msgstorages.MaxMsgPriority; i <= 0; i-- {
+			var (
+				msgList    = m[i]
+				msgListLen = len(m)
+			)
 
-				if len(msgList) == 0 {
-					continue
-				}
-
-				msgItem := msgList[0]
-
-				if msgListLen > 1 {
-					msgList = msgList[1:]
-				} else {
-					msgList = nil
-				}
-
-				return msgItem, nil
+			if len(msgList) == 0 {
+				continue
 			}
-		case msgstorages.MsgWeightCreatedAtWithPriority:
-			var bestMsgItem *fileMsgWrapper
 
-			for i := msgstorages.MaxMsgPriority; i <= 0; i-- {
-				var (
-					msgList = m[i]
-					msgListLen = len(msgList)
-				)
+			msgItem := msgList[0]
 
-				if len(msgList) == 0 {
-					continue
-				}
+			if msgListLen > 1 {
+				msgList = msgList[1:]
+			} else {
+				msgList = nil
+			}
 
-				msgItem := msgList[0]
+			return msgItem, nil
+		}
+	case msgstorages.MsgWeightCreatedAtWithPriority:
+		var bestMsgItem *fileMsgWrapper
 
-				if msgListLen > 1 {
-					msgList = msgList[1:]
-				} else {
-					msgList = nil
-				}
+		for i := msgstorages.MaxMsgPriority; i <= 0; i-- {
+			var (
+				msgList    = m[i]
+				msgListLen = len(msgList)
+			)
 
-				if bestMsgItem == nil {
-					bestMsgItem = msgItem
-					continue
-				}
+			if len(msgList) == 0 {
+				continue
+			}
 
-				if bestMsgItem.msg.GetMetadata().GetExpireAt() < msgItem.msg.GetMetadata().GetCreatedAt() {
-					continue
-				}
+			msgItem := msgList[0]
 
-				bestMsgItem = msgItem
+			if msgListLen > 1 {
+				msgList = msgList[1:]
+			} else {
+				msgList = nil
 			}
 
 			if bestMsgItem == nil {
-				break
+				bestMsgItem = msgItem
+				continue
 			}
 
-			return bestMsgItem, nil
-		default:
-			return nil, errdef.NewErr(errdef.ErrCodeArgsInvalid, "not support msg weight.")
+			if bestMsgItem.msg.GetMetadata().GetExpireAt() < msgItem.msg.GetMetadata().GetCreatedAt() {
+				continue
+			}
+
+			bestMsgItem = msgItem
+		}
+
+		if bestMsgItem == nil {
+			break
+		}
+
+		return bestMsgItem, nil
+	default:
+		return nil, errdef.NewErr(errdef.ErrCodeArgsInvalid, "not support msg weight.")
 	}
 
 	return nil, nil
 }
 
 // 用于存放轮询方式获取消息的桶
-type pollBucket struct {
+type bucket struct {
 	// 优先级消息队列链表
 	msgTable
 	// 指向当前消息桶在全局消息桶链表中的下个桶
-	nextOfBucketList *pollBucket
+	nextOfBucketList *bucket
 	// 指向当前消息桶在全局消息桶链表中的上个桶
-	prevOfBucketList *pollBucket
+	prevOfBucketList *bucket
 	// 串行重试队列
 	*serialRetryMsgQueue
 }
 
 // 待消费的消息长度
-func (p *pollBucket) len() uint32 {
+func (b *bucket) len() uint32 {
 	var totalMsgNum uint32
-	totalMsgNum = p.msgTable.len()
-	if p.serialRetryMsgQueue != nil {
-		totalMsgNum += uint32(p.serialRetryMsgQueue.Len())
+	totalMsgNum = b.msgTable.len()
+	if b.serialRetryMsgQueue != nil {
+		totalMsgNum += uint32(b.serialRetryMsgQueue.Len())
 	}
 	return totalMsgNum
 }
 
-func (p *pollBucket) pop(msgWeight msgstorages.MsgWeight) *fileMsgWrapper {
-	if p.serialRetryMsgQueue != nil && p.serialRetryMsgQueue.Len() > 0 {
-		retryItem := p.popRetry()
-		if retryItem == nil {
-			return nil
-		}
-
-		return retryItem.msgItem
+func (b *bucket) pop(msgWeight msgstorages.MsgWeight) *fileMsgWrapper {
+	if b.serialRetryMsgQueue != nil && b.serialRetryMsgQueue.Len() > 0 {
+		return b.popRetry()
 	}
 
-	msgItem, err := p.msgTable.pop(msgWeight)
+	msgItem, err := b.msgTable.pop(msgWeight)
 	if err != nil {
 		panic(err)
 	}
@@ -141,20 +136,21 @@ func (p *pollBucket) pop(msgWeight msgstorages.MsgWeight) *fileMsgWrapper {
 	return msgItem
 }
 
-// 用于存放消息先入先出方式获取消息的桶
-type fifoBucket struct {
-	msgTable
-	*serialRetryMsgQueue
-}
-
-// 待消费的消息长度
-func (p *fifoBucket) len() uint32 {
-	var totalMsgNum uint32
-	totalMsgNum = p.msgTable.len()
-	if p.serialRetryMsgQueue != nil {
-		totalMsgNum += uint32(p.serialRetryMsgQueue.Len())
+func (b *bucket) push(msgItem *fileMsgWrapper) {
+	if msgItem.msg.IsAttempted() && b.serialRetryMsgQueue != nil {
+		b.serialRetryMsgQueue.pushRetry(msgItem)
+		return
 	}
-	return totalMsgNum
+
+	var (
+		msgPriority = msgItem.msg.GetMetadata().GetPriority()
+		msgList     = b.msgTable[msgPriority]
+	)
+	if msgList == nil {
+		b.msgTable[msgPriority] = []*fileMsgWrapper{msgItem}
+		return
+	}
+	b.msgTable[msgPriority] = append(msgList, msgItem)
 }
 
 // 就绪队列,根据不同模式使用不同的实现
@@ -165,31 +161,47 @@ type readyMsgQueue interface {
 	push(*fileMsgWrapper)
 	// 返回队列长度
 	len() uint32
+	// 消息完成时候回调
+	onDoneMsg(*fileMsgWrapper)
 }
 
 // 轮询方式获取消息的桶消息哈希表
-type pollBucketLinkedMap struct {
-	bucketMap map[uint32]*pollBucket
-	headerOfBucketList *pollBucket
-	lastPollOfBucketList *pollBucket
-	tailOfBucketList *pollBucket
-	isSerialMode bool
-	msgWeight msgstorages.MsgWeight
+type bucketLinkedMap struct {
+	bucketMap            map[uint32]*bucket
+	headerOfBucketList   *bucket
+	lastPollOfBucketList *bucket
+	tailOfBucketList     *bucket
+	isSerialMode         bool
+	msgWeight            msgstorages.MsgWeight
+	onPush               func(*fileMsgWrapper)
+	onPop                func(*fileMsgWrapper)
+	onDoneMsgDo          func(wrapper *fileMsgWrapper)
 }
 
-func newPollBucketLinkedMap(isSerialMode bool, msgWeight msgstorages.MsgWeight) *pollBucketLinkedMap {
-	return &pollBucketLinkedMap{
-		bucketMap: make(map[uint32]*pollBucket),
+func newBucketLinkedMap(isSerialMode bool, msgWeight msgstorages.MsgWeight, onPush, onPop, onDoneMsgDo func(*fileMsgWrapper)) *bucketLinkedMap {
+	return &bucketLinkedMap{
+		bucketMap:    make(map[uint32]*bucket),
 		isSerialMode: isSerialMode,
-		msgWeight: msgWeight,
+		msgWeight:    msgWeight,
+		onPop:        onPop,
+		onPush:       onPush,
+		onDoneMsgDo:  onDoneMsgDo,
 	}
 }
 
-func (m *pollBucketLinkedMap) pop() *fileMsgWrapper {
-	var startPoll *pollBucket
+func (m *bucketLinkedMap) onDoneMsg(msgItem *fileMsgWrapper) {
+	if m.onDoneMsgDo == nil {
+		return
+	}
+
+	m.onDoneMsgDo(msgItem)
+}
+
+func (m *bucketLinkedMap) pop() *fileMsgWrapper {
+	var startPoll *bucket
 
 	for {
-		var polling *pollBucket
+		var polling *bucket
 		if m.lastPollOfBucketList != nil && m.lastPollOfBucketList.nextOfBucketList != nil {
 			polling = m.lastPollOfBucketList.nextOfBucketList
 		} else {
@@ -209,47 +221,50 @@ func (m *pollBucketLinkedMap) pop() *fileMsgWrapper {
 			continue
 		}
 
+		m.onPop(msgItem)
+
 		return msgItem
 	}
 
 	return nil
 }
 
-func (m *pollBucketLinkedMap) push(msgItem *fileMsgWrapper) {
+func (m *bucketLinkedMap) push(msgItem *fileMsgWrapper) {
 	var (
-		bucketId = msgItem.msg.GetMetadata().GetBucket()
-		bucket = m.bucketMap[bucketId]
+		bucketId  = msgItem.msg.GetMetadata().GetBucket()
+		theBucket = m.bucketMap[bucketId]
 	)
+
 	// 新的消息桶
-	if bucket == nil {
-		bucket = &pollBucket{
-			msgTable: msgTable{},
+	if theBucket == nil {
+		theBucket = &bucket{
+			msgTable:         msgTable{},
 			prevOfBucketList: m.tailOfBucketList,
 		}
-		if bucket.prevOfBucketList != nil {
-			bucket.prevOfBucketList.nextOfBucketList = bucket
+		if theBucket.prevOfBucketList != nil {
+			theBucket.prevOfBucketList.nextOfBucketList = theBucket
 		}
 
-		m.bucketMap[bucketId] = bucket
-		m.tailOfBucketList = bucket
+		m.bucketMap[bucketId] = theBucket
+		m.tailOfBucketList = theBucket
 		if m.headerOfBucketList == nil {
-			m.headerOfBucketList = bucket
+			m.headerOfBucketList = theBucket
 		}
 	}
 
-	var(
-		msgPriority = msgItem.msg.GetMetadata().GetPriority()
-		msgList = bucket.msgTable[msgPriority]
-	)
-	if msgList == nil {
-		bucket.msgTable[msgPriority] = []*fileMsgWrapper{msgItem}
-		return
+	doPush := func() {
+		if m.isSerialMode && theBucket.serialRetryMsgQueue == nil && msgItem.msg.IsAttempted() {
+			theBucket.serialRetryMsgQueue = newSerialRetryMsgQueue([]*fileMsgWrapper{msgItem})
+			return
+		}
+		theBucket.push(msgItem)
 	}
+	doPush()
 
-	bucket.msgTable[msgPriority] = append(msgList, msgItem)
+	m.onPush(msgItem)
 }
 
-func (m *pollBucketLinkedMap) len() uint32 {
+func (m *bucketLinkedMap) len() uint32 {
 	var totalMsgNum uint32
 	for _, bucket := range m.bucketMap {
 		totalMsgNum += bucket.len()
@@ -257,64 +272,170 @@ func (m *pollBucketLinkedMap) len() uint32 {
 	return totalMsgNum
 }
 
-
-// 消息先入先出方式的桶消息哈希表
-type fifoBucketLinkedMap struct {
-	bucketMap map[uint32]*fifoBucket
-	bucketList *skiplist.SkipList
-}
-
 // 不用桶模式存放的消息表
 type notBucketMsgTable struct {
 	msgTable
 	*serialRetryMsgQueue
+	isSerialMode bool
+	msgWeight    msgstorages.MsgWeight
+}
+
+func newNotBucketMsgTable(isSerialMode bool, msgWeight msgstorages.MsgWeight) *notBucketMsgTable {
+	return &notBucketMsgTable{
+		msgTable:     msgTable{},
+		isSerialMode: isSerialMode,
+		msgWeight:    msgWeight,
+	}
+}
+
+func (t *notBucketMsgTable) onMsgDone(_ *fileMsgWrapper) {
+	return
+}
+
+func (t *notBucketMsgTable) len() uint32 {
+	totalMsgNum := t.msgTable.len()
+	if t.serialRetryMsgQueue == nil {
+		return totalMsgNum
+	}
+	return totalMsgNum + uint32(t.serialRetryMsgQueue.Len())
+}
+
+func (t *notBucketMsgTable) pop() *fileMsgWrapper {
+	if t.isSerialMode && t.serialRetryMsgQueue != nil && t.serialRetryMsgQueue.Len() > 0 {
+		return t.serialRetryMsgQueue.popRetry()
+	}
+
+	msgItem, err := t.msgTable.pop(t.msgWeight)
+	if err != nil {
+		panic(err)
+	}
+
+	return msgItem
+}
+
+func (t *notBucketMsgTable) push(msgItem *fileMsgWrapper) {
+	if msgItem.msg.IsAttempted() && t.isSerialMode {
+		if t.serialRetryMsgQueue == nil {
+			t.serialRetryMsgQueue = newSerialRetryMsgQueue([]*fileMsgWrapper{msgItem})
+		} else {
+			t.serialRetryMsgQueue.pushRetry(msgItem)
+		}
+
+		return
+	}
+
+	t.msgTable.push(msgItem)
 }
 
 // 延迟队列
 type delayMsgQueue skiplist.SkipList
 
-// 迁移到期消息
-func (q *delayMsgQueue) migrateExpired() {
-	return
+// 延迟队列消息比较处理器
+type delayMsgQueueItemComparable struct{}
+
+func (c *delayMsgQueueItemComparable) Compare(lhs, rhs interface{}) int {
+	if lhs == rhs {
+		return 0
+	}
+
+	lhsMsgMetadata := lhs.(*fileMsgWrapper).msg.GetMetadata()
+	rhsMsgMetadata := rhs.(*fileMsgWrapper).msg.GetMetadata()
+	if lhsMsgMetadata.MsgOffset > rhsMsgMetadata.MsgOffset {
+		return 1
+	} else if lhsMsgMetadata.MsgOffset < rhsMsgMetadata.MsgOffset {
+		return -1
+	}
+	return 0
+}
+
+func (c *delayMsgQueueItemComparable) CalcScore(key interface{}) float64 {
+	msgMetadata := key.(*fileMsgWrapper).msg.GetMetadata()
+	return float64(msgMetadata.GetCreatedAt() + msgMetadata.GetDelaySeconds())
+}
+
+func newDelayMsgQueue() *delayMsgQueue {
+	return (*delayMsgQueue)(skiplist.New(&delayMsgQueueItemComparable{}))
+}
+
+// 迁移到期消息,按到期时间降序排序
+func (q *delayMsgQueue) migrateExpired() []*fileMsgWrapper {
+	var (
+		expired  []*fileMsgWrapper
+		skipList = (*skiplist.SkipList)(q)
+		now      = uint32(time.Now().Unix())
+		// 伪造一个当下下一秒过期的消息项
+		expiredAtNextSecFake = &fileMsgWrapper{
+			msg: msgstorages.NewMsg(&msgstorages.NewMsgReq{
+				CreatedAt:    now,
+				DelaySeconds: 1,
+			}),
+		}
+		// 找出离当下最近的未来过期的或者已经过期的消息项
+		found            = skipList.Find(expiredAtNextSecFake)
+		foundMsgMetadata = found.Key().(*fileMsgWrapper).msg.GetMetadata()
+	)
+
+	if foundMsgMetadata.GetDelaySeconds()+foundMsgMetadata.GetCreatedAt() > now {
+		found = found.Prev()
+	}
+
+	for found != nil {
+		expired = append(expired, found.Key().(*fileMsgWrapper))
+		found = found.Prev()
+	}
+
+	return expired
+}
+
+// 推入单个消息
+func (q *delayMsgQueue) push(msgItem *fileMsgWrapper) {
+	(*skiplist.SkipList)(q).Set(msgItem, struct{}{})
 }
 
 // 移除单个消息
 func (q *delayMsgQueue) remove(msgItem *fileMsgWrapper) bool {
+	(*skiplist.SkipList)(q).Remove(msgItem)
 	return false
 }
 
-// 串行化模式重试消息队列
-type serialRetryMsgQueue []*serialRetryMsgQueueItem
+// 串行化模式重试消息队列,以最小堆结构存储
+type serialRetryMsgQueue []*fileMsgWrapper
 
-type serialRetryMsgQueueItem struct {
-	// 需要重试文件消息
-	msgItem *fileMsgWrapper
-}
-
-func newSerialRetryMsgQueue(items []*serialRetryMsgQueueItem) *serialRetryMsgQueue {
+func newSerialRetryMsgQueue(items []*fileMsgWrapper) *serialRetryMsgQueue {
 	var queue serialRetryMsgQueue
-	if len(items) > 0 {
-		queue = append(queue, items...)
+	for _, item := range items {
+		if !queue.isValidRetryItem(item) {
+			continue
+		}
+		queue = append(queue, item)
 	}
+
 	heap.Init(&queue)
 	return &queue
 }
 
-func (q *serialRetryMsgQueue) popRetry() *serialRetryMsgQueueItem {
+func (q *serialRetryMsgQueue) popRetry() *fileMsgWrapper {
 	if len(*q) == 0 {
 		return nil
 	}
-	if (*q)[0].msgItem.msg.GetMetadata().ExpectRetryAt < uint32(time.Now().Unix()) {
+	if (*q)[0].msg.GetMetadata().ExpectRetryAt < uint32(time.Now().Unix()) {
 		return nil
 	}
-	return heap.Pop(q).(*serialRetryMsgQueueItem)
+	return heap.Pop(q).(*fileMsgWrapper)
 }
 
-func (q *serialRetryMsgQueue) pushRetry(retry *serialRetryMsgQueueItem) {
-	if retry.msgItem == nil || retry.msgItem.msg.GetMetadata().ExpectRetryAt == 0 {
+func (q *serialRetryMsgQueue) pushRetry(retry *fileMsgWrapper) {
+	if !q.isValidRetryItem(retry) {
 		return
 	}
 	heap.Push(q, retry)
+}
+
+func (serialRetryMsgQueue) isValidRetryItem(retry *fileMsgWrapper) bool {
+	if retry == nil || retry.msg.GetMetadata().ExpectRetryAt == 0 {
+		return false
+	}
+	return true
 }
 
 func (q serialRetryMsgQueue) Len() int {
@@ -327,12 +448,12 @@ func (q serialRetryMsgQueue) Swap(i, j int) {
 	q[j] = tmp
 }
 
-func (q serialRetryMsgQueue) Less(i, j int) bool  {
-	return q[i].msgItem.msg.GetMetadata().ExpectRetryAt < q[j].msgItem.msg.GetMetadata().ExpectRetryAt
+func (q serialRetryMsgQueue) Less(i, j int) bool {
+	return q[i].msg.GetMetadata().ExpectRetryAt < q[j].msg.GetMetadata().ExpectRetryAt
 }
 
 func (q *serialRetryMsgQueue) Push(x interface{}) {
-	*q = append(*q, x.(*serialRetryMsgQueueItem))
+	*q = append(*q, x.(*fileMsgWrapper))
 }
 
 func (q *serialRetryMsgQueue) Pop() interface{} {
@@ -346,6 +467,6 @@ func (q *serialRetryMsgQueue) Pop() interface{} {
 	return item
 }
 
-func (q serialRetryMsgQueue) Peek() *serialRetryMsgQueueItem {
+func (q serialRetryMsgQueue) Peek() *fileMsgWrapper {
 	return q[0]
 }

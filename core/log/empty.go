@@ -2,7 +2,7 @@ package log
 
 import "context"
 
-type EmptyLogger struct {}
+type EmptyLogger struct{}
 
 func (*EmptyLogger) Info(_ context.Context, _ interface{}) {
 }

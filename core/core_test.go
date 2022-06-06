@@ -8,11 +8,11 @@ import (
 	"testing"
 )
 
-func TestPrintMsg (t *testing.T) {
+func TestPrintMsg(t *testing.T) {
 	fmt.Printf("%+v", &msgstorages.Message{})
 }
 
-func TestSetBuf (t *testing.T) {
+func TestSetBuf(t *testing.T) {
 	b := make([]byte, 1000)
 	b[0] = byte(123)
 	t.Logf("%v", b)

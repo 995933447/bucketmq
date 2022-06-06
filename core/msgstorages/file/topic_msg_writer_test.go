@@ -42,7 +42,7 @@ func TestWriteTopicMsg(t *testing.T) {
 
 	var (
 		writtenResultChs []chan *WrittenMsgEvent
-		msgs []*msgstorages.Message
+		msgs             []*msgstorages.Message
 	)
 	for i := 0; i < 10; i++ {
 		writtenMsgEventCh := make(chan *WrittenMsgEvent, 1)
@@ -52,7 +52,7 @@ func TestWriteTopicMsg(t *testing.T) {
 			CreatedAt: uint32(time.Now().Unix()),
 		})
 		w.writeMsgReqChan <- &WriteMsgReq{
-			msg: msg,
+			msg:              msg,
 			writtenEventChan: writtenMsgEventCh,
 		}
 		writtenResultChs = append(writtenResultChs, writtenMsgEventCh)
@@ -60,8 +60,8 @@ func TestWriteTopicMsg(t *testing.T) {
 	}
 
 	for n, ch := range writtenResultChs {
-		t.Logf("loop:%d", n + 1)
-		res := <- ch
+		t.Logf("loop:%d", n+1)
+		res := <-ch
 		t.Logf("%+v", res)
 	}
 

@@ -50,7 +50,7 @@ type topicMultiFileHandler struct {
 func newTopicMultiFileHandler(topicName, dir string, maxWritableMsgNum, maxWritableMsgDataBytes uint32, syncToDiskInterval time.Duration) *topicMultiFileHandler {
 	return &topicMultiFileHandler{
 		topicName: topicName,
-		dir: dir,
+		dir:       dir,
 		indexFileWriter: &indexFileWriter{
 			maxWritableIndexNum: maxWritableMsgNum,
 		},
@@ -84,9 +84,9 @@ func (fh *topicMultiFileHandler) init() error {
 		return err
 	}
 	writtenIndexBytes := indexFileInfo.Size()
-	if writtenIndexBytes % indexBufSize > 0 {
+	if writtenIndexBytes%indexBufSize > 0 {
 		fh.hasFileCorruption = true
-		return  errdef.FileCorruptionErr
+		return errdef.FileCorruptionErr
 	}
 
 	dataFp, err := fh.makeDataFp()
@@ -127,7 +127,7 @@ func (fh *topicMultiFileHandler) checkForCorruptFiles() (bool, error) {
 		return false, err
 	}
 
-	if indexFileInfo.Size() % indexBufSize > 0 || uint32(indexFileInfo.Size() / indexBufSize) != fh.indexFileWriter.writtenIndexNum {
+	if indexFileInfo.Size()%indexBufSize > 0 || uint32(indexFileInfo.Size()/indexBufSize) != fh.indexFileWriter.writtenIndexNum {
 		fh.hasFileCorruption = true
 		return true, nil
 	}
@@ -171,7 +171,7 @@ func (fh *topicMultiFileHandler) sureWritableFiles() error {
 	indexFileInfo, err := os.Stat(indexFileName)
 	if err == nil {
 		indexFileSize := indexFileInfo.Size()
-		if indexFileSize % indexBufSize > 0 {
+		if indexFileSize%indexBufSize > 0 {
 			fh.hasFileCorruption = true
 			return errdef.FileCorruptionErr
 		}
@@ -262,7 +262,7 @@ func (fh *topicMultiFileHandler) openNextSeqMsgFiles() error {
 		return err
 	}
 	writtenIndexBytes := indexFileInfo.Size()
-	if writtenIndexBytes % indexBufSize > 0 {
+	if writtenIndexBytes%indexBufSize > 0 {
 		fh.hasFileCorruption = true
 		return errdef.FileCorruptionErr
 	}
@@ -311,7 +311,7 @@ func (fh *topicMultiFileHandler) assetConfirmedWritableFiles() error {
 }
 
 type WriteMsgReq struct {
-	msg *msgstorages.Message
+	msg              *msgstorages.Message
 	writtenEventChan chan *WrittenMsgEvent
 }
 
@@ -340,7 +340,7 @@ func newTopicMsgWriter(
 	syncToDiskInterval time.Duration,
 	logger log.Logger,
 
-	) (*topicMsgWriter, error) {
+) (*topicMsgWriter, error) {
 	if logger == nil {
 		return nil, errdef.NewErr(errdef.ErrCodeArgsInvalid, "logger is nil")
 	}
@@ -351,13 +351,13 @@ func newTopicMsgWriter(
 
 	writer := &topicMsgWriter{
 		topicName: topicName,
-		logger: logger,
+		logger:    logger,
 		multiFileHandler: newTopicMultiFileHandler(
-			 topicName,
-			 strings.TrimRight(baseDir, "/") + "/" + topicName,
-			 maxWritableMsgNum,
-			 maxWritableMsgDataBytes,
-			 syncToDiskInterval,
+			topicName,
+			strings.TrimRight(baseDir, "/")+"/"+topicName,
+			maxWritableMsgNum,
+			maxWritableMsgDataBytes,
+			syncToDiskInterval,
 		),
 	}
 
@@ -417,7 +417,7 @@ func (w *topicMsgWriter) WriteReqChan() chan *WriteMsgReq {
 // 设置日志组件
 func (w *topicMsgWriter) setLogger(logger log.Logger) error {
 	if logger == nil {
-		err := errdef.NewErr(errdef.ErrCodeArgsInvalid, "expected " + reflect.TypeOf(logger).Name() + ", but nil")
+		err := errdef.NewErr(errdef.ErrCodeArgsInvalid, "expected "+reflect.TypeOf(logger).Name()+", but nil")
 		return err
 	}
 	w.logger = logger
@@ -433,16 +433,16 @@ func (w *topicMsgWriter) writeMsgs(msgs []*msgstorages.Message) error {
 
 	for len(msgs) > 0 {
 		var (
-			batchWritableMsgs []*msgstorages.Message
+			batchWritableMsgs            []*msgstorages.Message
 			batchWritableMsgDataBufBytes uint32
-			areMsgFilesFull bool
+			areMsgFilesFull              bool
 		)
 
 		for _, msg := range msgs {
 			msgBytes := w.multiFileHandler.msgEncoder.getMsgsDataBufBytes([]*msgstorages.Message{msg})
 			batchWritableMsgDataBufBytes += msgBytes
-			if w.multiFileHandler.indexFileWriter.writtenIndexNum + uint32(len(batchWritableMsgs)) >= w.multiFileHandler.indexFileWriter.maxWritableIndexNum ||
-				w.multiFileHandler.dataFileWriter.writtenDataBytes + batchWritableMsgDataBufBytes >= w.multiFileHandler.dataFileWriter.maxWritableDataBytes {
+			if w.multiFileHandler.indexFileWriter.writtenIndexNum+uint32(len(batchWritableMsgs)) >= w.multiFileHandler.indexFileWriter.maxWritableIndexNum ||
+				w.multiFileHandler.dataFileWriter.writtenDataBytes+batchWritableMsgDataBufBytes >= w.multiFileHandler.dataFileWriter.maxWritableDataBytes {
 				areMsgFilesFull = true
 				batchWritableMsgDataBufBytes -= msgBytes
 				break
@@ -456,8 +456,8 @@ func (w *topicMsgWriter) writeMsgs(msgs []*msgstorages.Message) error {
 		if batchWritableMsgNum > 0 {
 			indexesBuf, dataBuf := w.multiFileHandler.msgEncoder.encodeBuf(batchWritableMsgs)
 
-			var(
-				indexesBufLen = len(indexesBuf)
+			var (
+				indexesBufLen   = len(indexesBuf)
 				totalWrittenNum int
 			)
 			for {
@@ -517,12 +517,12 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 
 	writeMsgsAsPossible := func(firstWriteReq *WriteMsgReq) error {
 		type writtenMsgEventChWrapper struct {
-			ch chan *WrittenMsgEvent
+			ch        chan *WrittenMsgEvent
 			msgOffset uint64
 		}
 		var (
-			msgClones []*msgstorages.Message
-			allocNextMsgOffset = w.multiFileHandler.firstMsgOffset + uint64(w.multiFileHandler.writtenIndexNum)
+			msgClones                 []*msgstorages.Message
+			allocNextMsgOffset        = w.multiFileHandler.firstMsgOffset + uint64(w.multiFileHandler.writtenIndexNum)
 			writtenMsgEventChWrappers []*writtenMsgEventChWrapper
 		)
 
@@ -536,7 +536,7 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 			if writeMsgReq.writtenEventChan != nil {
 				writtenMsgEventChWrappers = append(writtenMsgEventChWrappers, &writtenMsgEventChWrapper{
 					msgOffset: msgCloneMetadata.MsgOffset,
-					ch: writeMsgReq.writtenEventChan,
+					ch:        writeMsgReq.writtenEventChan,
 				})
 			}
 			allocNextMsgOffset++
@@ -549,11 +549,11 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 		for {
 			var moreWriteMsgReq *WriteMsgReq
 			select {
-				case moreWriteMsgReq = <- w.writeMsgReqChan:
-					if moreWriteMsgReq != nil {
-						handleDataForReadyWrite(moreWriteMsgReq)
-					}
-				default:
+			case moreWriteMsgReq = <-w.writeMsgReqChan:
+				if moreWriteMsgReq != nil {
+					handleDataForReadyWrite(moreWriteMsgReq)
+				}
+			default:
 			}
 			if moreWriteMsgReq == nil {
 				break
@@ -593,29 +593,29 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 
 	for {
 		select {
-			case writeMsgReq := <- w.writeMsgReqChan:
-				if w.isReadyStopLoop() {
-					continue
-				}
-				err := writeMsgsAsPossible(writeMsgReq)
-				if err != nil {
-					return err
-				}
-			case <- syncToDiskTick.C:
-				if hasFileCorruption, err := w.multiFileHandler.checkForCorruptFiles(); err != nil {
-					return err
-				} else if hasFileCorruption {
-					return errdef.FileCorruptionErr
-				} else if err = w.multiFileHandler.syncToDisk(); err != nil {
-					w.logger.Warn(ctx, err)
-				}
-			case <- w.stopLoopEventCh:
-				w.readyToStopLoop()
-				err := writeMsgsAsPossible(nil)
-				if err != nil {
-					return err
-				}
-				return nil
+		case writeMsgReq := <-w.writeMsgReqChan:
+			if w.isReadyStopLoop() {
+				continue
+			}
+			err := writeMsgsAsPossible(writeMsgReq)
+			if err != nil {
+				return err
+			}
+		case <-syncToDiskTick.C:
+			if hasFileCorruption, err := w.multiFileHandler.checkForCorruptFiles(); err != nil {
+				return err
+			} else if hasFileCorruption {
+				return errdef.FileCorruptionErr
+			} else if err = w.multiFileHandler.syncToDisk(); err != nil {
+				w.logger.Warn(ctx, err)
+			}
+		case <-w.stopLoopEventCh:
+			w.readyToStopLoop()
+			err := writeMsgsAsPossible(nil)
+			if err != nil {
+				return err
+			}
+			return nil
 		}
 	}
 }

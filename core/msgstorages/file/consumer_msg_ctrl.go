@@ -1,7 +1,6 @@
 package file
 
 import (
-	"github.com/995933447/bucketmq/core/log"
 	"github.com/995933447/bucketmq/core/msgstorages"
 	"github.com/995933447/bucketmq/core/utils/structs"
 )
@@ -21,6 +20,8 @@ type consumerMsgLoaderPerFileSeq struct {
 	fileSeqCreatedAt uint32
 	// 开始的消息位移
 	firstMsgOffset uint64
+	// 完成消费的位移
+	doneOffsetSet *structs.Uint32Set
 }
 
 type consumerMultiFileHandler struct {
@@ -34,14 +35,12 @@ type consumerMultiFileHandler struct {
 	dir string
 	// 消息编码器
 	*msgEncoder
-	// 日志
-	logger log.Logger
 	// 是否初始化完成
 	finishInit bool
 }
 
 type fileMsgWrapper struct {
-	msg msgstorages.Message
+	msg     *msgstorages.Message
 	fileSeq uint32
 }
 
@@ -60,8 +59,6 @@ type consumerMsgCtrl struct {
 	multiFileHandler *consumerMultiFileHandler
 	// 是否消息桶模式
 	isBucketMode bool
-	// 消息桶权重分配方式
-	bucketWeight msgstorages.BucketWeight
 	// 消息权重分配方式
 	msgWeight msgstorages.MsgWeight
 	// 是否串行模式
@@ -72,8 +69,6 @@ type consumerMsgCtrl struct {
 	globalMaxConcurrentConsumption uint32
 	// 当前每个桶的正在消费消息数
 	bucketToConcurrentConsumptionMap map[uint32]uint32
-	// 完成消费的位移
-	doneOffsetSet *structs.Uint32Set
 	// 桶模式就绪队列
 	readyMsgQueue
 	// 延时队列

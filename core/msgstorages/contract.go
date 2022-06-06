@@ -14,9 +14,6 @@ const (
 )
 
 const (
-	BucketWeightPoll BucketWeight = iota
-	BucketWeightFifo
-
 	MsgWeightPriority MsgWeight = iota
 	MsgWeightCreatedAtWithPriority
 )
@@ -72,7 +69,7 @@ func (m *MsgMetadata) GetExpireAt() uint32 {
 
 type MsgDataPayload struct {
 	// 消息内容
-	data []byte	`access:"r"`
+	data []byte `access:"r"`
 }
 
 func (m *MsgDataPayload) GetData() []byte {
@@ -80,7 +77,7 @@ func (m *MsgDataPayload) GetData() []byte {
 }
 
 type Message struct {
-	metadata *MsgMetadata `access:"r"`
+	metadata    *MsgMetadata    `access:"r"`
 	dataPayload *MsgDataPayload `access:"r"`
 }
 
@@ -111,15 +108,15 @@ func NewMsg(req *NewMsgReq) *Message {
 
 	return &Message{
 		metadata: &MsgMetadata{
-			bucket:          req.Bucket,
-			createdAt:       req.CreatedAt,
-			priority:        req.Priority,
-			delaySeconds:    req.DelaySeconds,
-			expireAt:        req.ExpireAt,
-			msgId:           msgId,
+			bucket:       req.Bucket,
+			createdAt:    req.CreatedAt,
+			priority:     req.Priority,
+			delaySeconds: req.DelaySeconds,
+			expireAt:     req.ExpireAt,
+			msgId:        msgId,
 		},
 		dataPayload: &MsgDataPayload{
-			data:			 req.Data,
+			data: req.Data,
 		},
 	}
 }
@@ -127,18 +124,22 @@ func NewMsg(req *NewMsgReq) *Message {
 func (m *Message) DeepClone() *Message {
 	return &Message{
 		metadata: &MsgMetadata{
-			bucket:          m.metadata.bucket,
-			createdAt:       m.metadata.createdAt,
-			priority:        m.metadata.priority,
-			delaySeconds:    m.metadata.delaySeconds,
-			expireAt:        m.metadata.expireAt,
-			msgId:           m.metadata.msgId,
-			MsgOffset:		 m.metadata.MsgOffset,
+			bucket:       m.metadata.bucket,
+			createdAt:    m.metadata.createdAt,
+			priority:     m.metadata.priority,
+			delaySeconds: m.metadata.delaySeconds,
+			expireAt:     m.metadata.expireAt,
+			msgId:        m.metadata.msgId,
+			MsgOffset:    m.metadata.MsgOffset,
 		},
 		dataPayload: &MsgDataPayload{
-			data: 			m.dataPayload.data,
+			data: m.dataPayload.data,
 		},
 	}
+}
+
+func (m *Message) IsAttempted() bool {
+	return m.metadata.ExpectRetryAt > 0
 }
 
 func (m *Message) GetMetadata() *MsgMetadata {

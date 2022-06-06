@@ -7,7 +7,7 @@ import (
 
 const (
 	bufBeginBoundary = 0x12
-	bufEndBoundary = 0x34
+	bufEndBoundary   = 0x34
 )
 
 const (
@@ -16,13 +16,13 @@ const (
 	// indexes buf len: Bucket(4 bytes) + CreatedAt(4 bytes) + Priority(1 byte)
 	//	+ DelaySeconds(4 bytes) + ExpireAt(4 bytes)
 	//	+ DataLen(4 bytes) + MsgIdLen(16 bytes) + MsgOffset(8 bytes) + bufBoundarySize(2 bytes) = 47 bytes
-	indexBufSize = 47
+	indexBufSize  = 47
 	offsetBufSize = 4
 )
 
 type msgEncoder struct {
 	indexesBuf []byte
-	dataBuf []byte
+	dataBuf    []byte
 }
 
 func (e *msgEncoder) getMsgsDataBufBytes(msgs []*msgstorages.Message) uint32 {
@@ -44,17 +44,17 @@ func (e *msgEncoder) encodeBuf(msgs []*msgstorages.Message) (indexesBuf []byte, 
 	}
 
 	var (
-		endian = binary.LittleEndian
+		endian            = binary.LittleEndian
 		writtenDataBufLen uint32
 	)
 	for i, msg := range msgs {
 		var (
-			metadata = msg.GetMetadata()
+			metadata    = msg.GetMetadata()
 			dataPayload = msg.GetDataPayload()
-			dataLen = len(dataPayload.GetData())
+			dataLen     = len(dataPayload.GetData())
 		)
 
-		writableIndexesBuf := e.indexesBuf[i * indexBufSize:]
+		writableIndexesBuf := e.indexesBuf[i*indexBufSize:]
 		writableIndexesBuf[0] = bufBeginBoundary
 		endian.PutUint32(writableIndexesBuf[1:5], metadata.GetCreatedAt())
 		endian.PutUint32(writableIndexesBuf[5:9], metadata.GetBucket())
@@ -69,7 +69,7 @@ func (e *msgEncoder) encodeBuf(msgs []*msgstorages.Message) (indexesBuf []byte, 
 		writableDataBuf := e.dataBuf[writtenDataBufLen:]
 		writableDataBuf[0] = bufBeginBoundary
 		copy(writableDataBuf[1:], dataPayload.GetData())
-		writableDataBuf[dataLen + 1] = bufEndBoundary
+		writableDataBuf[dataLen+1] = bufEndBoundary
 		writtenDataBufLen += e.getMsgsDataBufBytes([]*msgstorages.Message{msg})
 	}
 
@@ -84,7 +84,7 @@ func (e *msgEncoder) decodeOffsets(buf []byte) ([]uint32, error) {
 	offsets := make([]uint32, 0, offsetNum)
 	endian := binary.LittleEndian
 	for i := 0; i < len(buf); i += 4 {
-		offsets = append(offsets, endian.Uint32(buf[i:i + offsetBufSize]))
+		offsets = append(offsets, endian.Uint32(buf[i:i+offsetBufSize]))
 	}
 	return offsets, nil
 }

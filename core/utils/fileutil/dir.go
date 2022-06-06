@@ -7,7 +7,7 @@ import (
 
 func MkdirIfNotExist(dirName string) error {
 	dirInfo, err := os.Stat(dirName)
-	if err != nil  {
+	if err != nil {
 		if !os.IsNotExist(err) {
 			return err
 		}
