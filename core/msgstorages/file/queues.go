@@ -340,17 +340,16 @@ func (c *delayMsgQueueItemComparable) Compare(lhs, rhs interface{}) int {
 
 	lhsMsgMetadata := lhs.(*fileMsgWrapper).msg.GetMetadata()
 	rhsMsgMetadata := rhs.(*fileMsgWrapper).msg.GetMetadata()
-	if lhsMsgMetadata.MsgOffset > rhsMsgMetadata.MsgOffset {
+	if lhsMsgMetadata.GetMsgOffset() > rhsMsgMetadata.GetMsgOffset() {
 		return 1
-	} else if lhsMsgMetadata.MsgOffset < rhsMsgMetadata.MsgOffset {
+	} else if lhsMsgMetadata.GetMsgOffset() < rhsMsgMetadata.GetMsgOffset() {
 		return -1
 	}
 	return 0
 }
 
 func (c *delayMsgQueueItemComparable) CalcScore(key interface{}) float64 {
-	msgMetadata := key.(*fileMsgWrapper).msg.GetMetadata()
-	return float64(msgMetadata.GetCreatedAt() + msgMetadata.GetDelaySeconds())
+	return float64(key.(*fileMsgWrapper).msg.ExpectAttemptAt())
 }
 
 func newDelayMsgQueue() *delayMsgQueue {
@@ -364,18 +363,17 @@ func (q *delayMsgQueue) migrateExpired() []*fileMsgWrapper {
 		skipList = (*skiplist.SkipList)(q)
 		now      = uint32(time.Now().Unix())
 		// 伪造一个当下下一秒过期的消息项
-		expiredAtNextSecFake = &fileMsgWrapper{
+		expireAtNextSecFake = &fileMsgWrapper{
 			msg: msgstorages.NewMsg(&msgstorages.NewMsgReq{
 				CreatedAt:    now,
 				DelaySeconds: 1,
 			}),
 		}
 		// 找出离当下最近的未来过期的或者已经过期的消息项
-		found            = skipList.Find(expiredAtNextSecFake)
-		foundMsgMetadata = found.Key().(*fileMsgWrapper).msg.GetMetadata()
+		found = skipList.Find(expireAtNextSecFake)
 	)
 
-	if foundMsgMetadata.GetDelaySeconds()+foundMsgMetadata.GetCreatedAt() > now {
+	if found.Key().(*fileMsgWrapper).msg.ExpectAttemptAt() > now {
 		found = found.Prev()
 	}
 
@@ -418,7 +416,7 @@ func (q *serialRetryMsgQueue) popRetry() *fileMsgWrapper {
 	if len(*q) == 0 {
 		return nil
 	}
-	if (*q)[0].msg.GetMetadata().ExpectRetryAt < uint32(time.Now().Unix()) {
+	if (*q)[0].msg.GetMetadata().GetExpectRetryAt() < uint32(time.Now().Unix()) {
 		return nil
 	}
 	return heap.Pop(q).(*fileMsgWrapper)
@@ -432,7 +430,7 @@ func (q *serialRetryMsgQueue) pushRetry(retry *fileMsgWrapper) {
 }
 
 func (serialRetryMsgQueue) isValidRetryItem(retry *fileMsgWrapper) bool {
-	if retry == nil || retry.msg.GetMetadata().ExpectRetryAt == 0 {
+	if retry == nil || retry.msg.GetMetadata().GetExpectRetryAt() == 0 {
 		return false
 	}
 	return true
@@ -449,7 +447,7 @@ func (q serialRetryMsgQueue) Swap(i, j int) {
 }
 
 func (q serialRetryMsgQueue) Less(i, j int) bool {
-	return q[i].msg.GetMetadata().ExpectRetryAt < q[j].msg.GetMetadata().ExpectRetryAt
+	return q[i].msg.GetMetadata().GetExpectRetryAt() < q[j].msg.GetMetadata().GetExpectRetryAt()
 }
 
 func (q *serialRetryMsgQueue) Push(x interface{}) {

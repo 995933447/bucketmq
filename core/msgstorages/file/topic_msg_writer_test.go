@@ -19,7 +19,7 @@ func TestInitTopicMsgWriter(t *testing.T) {
 func mockTopicMsgWriter() (*topicMsgWriter, error) {
 	return newTopicMsgWriter(
 		"test_topic",
-		"/data/bucketmqtest3",
+		"/data/bucketmqtest11",
 		2,
 		100,
 		5,
@@ -44,7 +44,7 @@ func TestWriteTopicMsg(t *testing.T) {
 		writtenResultChs []chan *WrittenMsgEvent
 		msgs             []*msgstorages.Message
 	)
-	for i := 0; i < 10; i++ {
+	for i := 0; i < 5; i++ {
 		writtenMsgEventCh := make(chan *WrittenMsgEvent, 1)
 		msg := msgstorages.NewMsg(&msgstorages.NewMsgReq{
 			Data:      []byte(fmt.Sprintf("Hello world, %d", i)),
@@ -66,6 +66,6 @@ func TestWriteTopicMsg(t *testing.T) {
 	}
 
 	for _, msg := range msgs {
-		t.Logf("msg.MsgOffset:%d", msg.GetMetadata().MsgOffset)
+		t.Logf("msg.MsgOffset:%d", msg.GetMetadata().GetMsgOffset())
 	}
 }

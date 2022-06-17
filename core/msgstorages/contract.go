@@ -3,6 +3,8 @@ package msgstorages
 import (
 	"context"
 	"github.com/995933447/bucketmq/core/utils/uniqid"
+	"math"
+	"time"
 )
 
 const (
@@ -36,11 +38,31 @@ type MsgMetadata struct {
 	// 消息ID
 	msgId string `access:"r"`
 	// 全局消息位移
-	MsgOffset uint64 `access:"rw"`
+	msgOffset uint64 `access:"r"`
 	// 重试次数
-	RetryCnt uint32
+	retryCnt uint32 `access:"r"`
 	// 期望重试时间
-	ExpectRetryAt uint32
+	expectRetryAt uint32 `access:"rw"`
+}
+
+func (m *MsgMetadata) GetMsgOffset() uint64 {
+	return m.msgOffset
+}
+
+func (m *MsgMetadata) GetRetryCnt() uint32 {
+	return m.retryCnt
+}
+
+func (m *MsgMetadata) AddRetryCnt() {
+	m.retryCnt++
+}
+
+func (m *MsgMetadata) GetExpectRetryAt() uint32 {
+	return m.expectRetryAt
+}
+
+func (m *MsgMetadata) SetExpectRetryAt(expectRetryAt uint32) {
+	m.expectRetryAt = expectRetryAt
 }
 
 func (m *MsgMetadata) GetMsgId() string {
@@ -96,6 +118,12 @@ type NewMsgReq struct {
 	Id string
 	// 消息过期时间
 	ExpireAt uint32
+	// 全局消息位移
+	MsgOffset uint64 `access:"r"`
+	// 重试次数
+	RetryCnt uint32 `access:"r"`
+	// 期望重试时间
+	ExpectRetryAt uint32 `access:"rw"`
 }
 
 func NewMsg(req *NewMsgReq) *Message {
@@ -114,6 +142,9 @@ func NewMsg(req *NewMsgReq) *Message {
 			delaySeconds: req.DelaySeconds,
 			expireAt:     req.ExpireAt,
 			msgId:        msgId,
+			msgOffset:    req.MsgOffset,
+			retryCnt:     req.RetryCnt,
+			expectRetryAt: req.ExpectRetryAt,
 		},
 		dataPayload: &MsgDataPayload{
 			data: req.Data,
@@ -121,25 +152,19 @@ func NewMsg(req *NewMsgReq) *Message {
 	}
 }
 
-func (m *Message) DeepClone() *Message {
-	return &Message{
-		metadata: &MsgMetadata{
-			bucket:       m.metadata.bucket,
-			createdAt:    m.metadata.createdAt,
-			priority:     m.metadata.priority,
-			delaySeconds: m.metadata.delaySeconds,
-			expireAt:     m.metadata.expireAt,
-			msgId:        m.metadata.msgId,
-			MsgOffset:    m.metadata.MsgOffset,
-		},
-		dataPayload: &MsgDataPayload{
-			data: m.dataPayload.data,
-		},
+func (m *Message) CalcDefaultRetryAt() {
+	m.metadata.expectRetryAt = uint32(math.Pow(float64(m.metadata.retryCnt), 2)) * 5 + uint32(time.Now().Unix())
+}
+
+func (m *Message) ExpectAttemptAt() uint32 {
+	if m.IsAttempted() {
+		return m.metadata.expectRetryAt
 	}
+	return m.metadata.createdAt + m.metadata.delaySeconds
 }
 
 func (m *Message) IsAttempted() bool {
-	return m.metadata.ExpectRetryAt > 0
+	return m.metadata.expectRetryAt > 0
 }
 
 func (m *Message) GetMetadata() *MsgMetadata {

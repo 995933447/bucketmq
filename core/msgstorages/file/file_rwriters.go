@@ -9,7 +9,6 @@ const (
 	dataFileSuffixName             = "data"
 	doneFileSuffixName             = "done"
 	attemptFileSuffixName          = "attempt"
-	deadFileSuffixName             = "dead"
 	startOffsetCheckFileSuffixName = "start"
 )
 
@@ -27,6 +26,8 @@ type indexFileWriter struct {
 
 type indexFileReader struct {
 	fp *os.File
+	cursor int64
+	indexNum uint32
 }
 
 type dataFileWriter struct {
@@ -41,6 +42,7 @@ type dataFileReader struct {
 
 type doneFileRWriter struct {
 	fp *os.File
+	doneNum uint32
 }
 
 type attemptFileRWriter struct {

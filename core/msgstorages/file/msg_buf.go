@@ -2,7 +2,6 @@ package file
 
 import (
 	"encoding/binary"
-	"github.com/995933447/bucketmq/core/msgstorages"
 )
 
 const (
@@ -14,28 +13,29 @@ const (
 	// 0x12 + 0x34 = 2 bytes
 	bufBoundarySize = 2
 	// indexes buf len: Bucket(4 bytes) + CreatedAt(4 bytes) + Priority(1 byte)
-	//	+ DelaySeconds(4 bytes) + ExpireAt(4 bytes)
-	//	+ DataLen(4 bytes) + MsgIdLen(16 bytes) + MsgOffset(8 bytes) + bufBoundarySize(2 bytes) = 47 bytes
-	indexBufSize  = 47
-	offsetBufSize = 4
+	//	+ DelaySeconds(4 bytes) + ExpireAt(4 bytes) + DataOffset(4 bytes)
+	//	+ DataLen(4 bytes) + MsgIdLen(16 bytes) + MsgOffset(8 bytes) + bufBoundarySize(2 bytes) = 51 bytes
+	indexBufSize  = 51
+	doneMetadataBufSize = 12
 )
 
-type msgEncoder struct {
+type msgBufEncoder struct {
 	indexesBuf []byte
 	dataBuf    []byte
+	doneMetadataBuf []byte
 }
 
-func (e *msgEncoder) getMsgsDataBufBytes(msgs []*msgstorages.Message) uint32 {
+func (e *msgBufEncoder) getMsgsDataBufBytes(msgItems []*fileMsgWrapper) uint32 {
 	var totalBytes uint32
-	for _, msg := range msgs {
-		totalBytes += uint32(len(msg.GetDataPayload().GetData())) + bufBoundarySize
+	for _, msgItem := range msgItems {
+		totalBytes += uint32(len(msgItem.msg.GetDataPayload().GetData())) + bufBoundarySize
 	}
 	return totalBytes
 }
 
-func (e *msgEncoder) encodeBuf(msgs []*msgstorages.Message) (indexesBuf []byte, dataBuf []byte) {
-	indexesBufBytes := len(msgs) * indexBufSize
-	dataBufSizeBytes := e.getMsgsDataBufBytes(msgs)
+func (e *msgBufEncoder) encodeMsgs(msgItems []*fileMsgWrapper) (indexesBuf []byte, dataBuf []byte) {
+	indexesBufBytes := len(msgItems) * indexBufSize
+	dataBufSizeBytes := e.getMsgsDataBufBytes(msgItems)
 	if indexesBufBytes > len(e.indexesBuf) {
 		e.indexesBuf = make([]byte, indexesBufBytes)
 	}
@@ -47,8 +47,9 @@ func (e *msgEncoder) encodeBuf(msgs []*msgstorages.Message) (indexesBuf []byte, 
 		endian            = binary.LittleEndian
 		writtenDataBufLen uint32
 	)
-	for i, msg := range msgs {
+	for i, msgItem := range msgItems {
 		var (
+			msg 		= msgItem.msg
 			metadata    = msg.GetMetadata()
 			dataPayload = msg.GetDataPayload()
 			dataLen     = len(dataPayload.GetData())
@@ -61,16 +62,17 @@ func (e *msgEncoder) encodeBuf(msgs []*msgstorages.Message) (indexesBuf []byte, 
 		endian.PutUint32(writableIndexesBuf[9:13], metadata.GetExpireAt())
 		writableIndexesBuf[13] = metadata.GetPriority()
 		endian.PutUint32(writableIndexesBuf[14:18], metadata.GetDelaySeconds())
-		endian.PutUint64(writableIndexesBuf[18:26], metadata.MsgOffset)
-		endian.PutUint32(writableIndexesBuf[26:30], uint32(dataLen))
-		copy(writableIndexesBuf[30:46], metadata.GetMsgId())
-		writableIndexesBuf[46] = bufEndBoundary
+		endian.PutUint64(writableIndexesBuf[18:26], metadata.GetMsgOffset())
+		endian.PutUint32(writableIndexesBuf[26:30], msgItem.dataOffset)
+		endian.PutUint32(writableIndexesBuf[30:34], uint32(dataLen))
+		copy(writableIndexesBuf[34:50], metadata.GetMsgId())
+		writableIndexesBuf[50] = bufEndBoundary
 
 		writableDataBuf := e.dataBuf[writtenDataBufLen:]
 		writableDataBuf[0] = bufBeginBoundary
 		copy(writableDataBuf[1:], dataPayload.GetData())
-		writableDataBuf[dataLen+1] = bufEndBoundary
-		writtenDataBufLen += e.getMsgsDataBufBytes([]*msgstorages.Message{msg})
+		writableDataBuf[dataLen + 1] = bufEndBoundary
+		writtenDataBufLen += e.getMsgsDataBufBytes([]*fileMsgWrapper{msgItem})
 	}
 
 	indexesBuf = e.indexesBuf[:indexesBufBytes]
@@ -79,12 +81,36 @@ func (e *msgEncoder) encodeBuf(msgs []*msgstorages.Message) (indexesBuf []byte, 
 	return
 }
 
-func (e *msgEncoder) decodeOffsets(buf []byte) ([]uint32, error) {
-	offsetNum := len(buf) / offsetBufSize
-	offsets := make([]uint32, 0, offsetNum)
-	endian := binary.LittleEndian
-	for i := 0; i < len(buf); i += 4 {
-		offsets = append(offsets, endian.Uint32(buf[i:i+offsetBufSize]))
-	}
-	return offsets, nil
+func (e *msgBufEncoder) decodeIndexes(buf []byte) []*fileMsgWrapper {
+	//var (
+	//	msgItems []*fileMsgWrapper
+	//	completeBufLen = len(buf)
+	//)
+	//for i := 0; i < completeBufLen; i += indexBufSize {
+	//	var(
+	//		msgItem = &fileMsgWrapper{}
+	//		buf = buf[i:]
+	//	)
+	//}
+	return nil
 }
+
+func (e *msgBufEncoder) decodeData(buf []byte) []byte {
+	return nil
+}
+
+func (e *msgBufEncoder) decodeDoneMetadata(buf []byte) []*doneFileMsgMetadataWrapper {
+	metadataNum := len(buf) / doneMetadataBufSize
+	doneMetadataList := make([]*doneFileMsgMetadataWrapper, 0, metadataNum)
+	endian := binary.LittleEndian
+	completeBufLen := len(buf)
+	for i := 0; i < completeBufLen; i += doneMetadataBufSize {
+		buf = buf[i:]
+		doneMetadata := &doneFileMsgMetadataWrapper{}
+		doneMetadata.msgOffset = endian.Uint64(buf[:8])
+		doneMetadata.doneAt = endian.Uint32(buf[8:12])
+		doneMetadataList = append(doneMetadataList, doneMetadata)
+	}
+	return doneMetadataList
+}
+
