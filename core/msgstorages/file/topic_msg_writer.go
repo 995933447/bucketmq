@@ -18,30 +18,35 @@ const (
 	defaultSyncToDiskInterval = time.Second * 5
 )
 
-// topic消息文件处理器
-type topicMultiFileHandler struct {
+type topicSegFileGroupMsgWriter struct {
 	// 索引文件写入处理器
 	*indexFileWriter
 	// 数据文件写入处理器
 	*dataFileWriter
-	// topic名称
-	topicName string
-	// 文件目录
-	dir string
 	// 消息文件序列号
 	fileSeq string
 	// 文件创建时间
 	fileSeqCreatedAt uint32
 	// 开始的消息位移
 	firstMsgOffset uint64
+	// 发送有新的写入文件被打开的通知的chan
+	nextSeqFilesOpenEventCh chan *nextSeqFilesOpenEvent
+}
+
+// topic消息文件处理器
+type topicMultiFileHandler struct {
+	// topic名称
+	topicName string
+	// 文件目录
+	dir string
+	// 消息分片文件组写入器
+	segFileGroupMsgWriter *topicSegFileGroupMsgWriter
 	// 定时冲刷磁盘的时间间隔
 	syncToDiskInterval time.Duration
 	// 消息文件是否被污染
 	hasFileCorruption bool
 	// 消息编码器
 	*msgBufEncoder
-	// 发送有新的写入文件被打开的通知的chan
-	nextSeqFilesOpenEventCh chan *nextSeqFilesOpenEvent
 	// 是否初始化完成
 	finishInit bool
 }
@@ -51,11 +56,13 @@ func newTopicMultiFileHandler(topicName, dir string, maxWritableMsgNum, maxWrita
 	return &topicMultiFileHandler{
 		topicName: topicName,
 		dir:       dir,
-		indexFileWriter: &indexFileWriter{
-			maxWritableIndexNum: maxWritableMsgNum,
-		},
-		dataFileWriter: &dataFileWriter{
-			maxWritableDataBytes: maxWritableMsgDataBytes,
+		segFileGroupMsgWriter: &topicSegFileGroupMsgWriter{
+			indexFileWriter: &indexFileWriter{
+				maxWritableIndexNum: maxWritableMsgNum,
+			},
+			dataFileWriter: &dataFileWriter{
+				maxWritableDataBytes: maxWritableMsgDataBytes,
+			},
 		},
 		syncToDiskInterval: syncToDiskInterval,
 	}
@@ -98,12 +105,12 @@ func (fh *topicMultiFileHandler) init() error {
 		return err
 	}
 
-	fh.indexFileWriter.fp = indexFp
-	fh.dataFileWriter.fp = dataFp
-	fh.indexFileWriter.writtenIndexNum = uint32(writtenIndexBytes / indexBufSize)
-	fh.writtenDataBytes = uint32(dataFileInfo.Size())
+	fh.segFileGroupMsgWriter.indexFileWriter.fp = indexFp
+	fh.segFileGroupMsgWriter.dataFileWriter.fp = dataFp
+	fh.segFileGroupMsgWriter.indexFileWriter.writtenIndexNum = uint32(writtenIndexBytes / indexBufSize)
+	fh.segFileGroupMsgWriter.writtenDataBytes = uint32(dataFileInfo.Size())
 	fh.msgBufEncoder = &msgBufEncoder{}
-	fh.nextSeqFilesOpenEventCh = make(chan *nextSeqFilesOpenEvent, 10000)
+	fh.segFileGroupMsgWriter.nextSeqFilesOpenEventCh = make(chan *nextSeqFilesOpenEvent, 10000)
 	fh.finishInit = true
 
 	return nil
@@ -111,10 +118,10 @@ func (fh *topicMultiFileHandler) init() error {
 
 // 同步文件消息数据到磁盘
 func (fh *topicMultiFileHandler) syncToDisk() error {
-	if err := fh.indexFileWriter.fp.Sync(); err != nil {
+	if err := fh.segFileGroupMsgWriter.indexFileWriter.fp.Sync(); err != nil {
 		return err
 	}
-	if err := fh.dataFileWriter.fp.Sync(); err != nil {
+	if err := fh.segFileGroupMsgWriter.dataFileWriter.fp.Sync(); err != nil {
 		return err
 	}
 	return nil
@@ -122,22 +129,23 @@ func (fh *topicMultiFileHandler) syncToDisk() error {
 
 // 检查文件是否被污染
 func (fh *topicMultiFileHandler) checkForCorruptFiles() (bool, error) {
-	indexFileInfo, err := fh.indexFileWriter.fp.Stat()
+	indexFileInfo, err := fh.segFileGroupMsgWriter.indexFileWriter.fp.Stat()
 	if err != nil {
 		return false, err
 	}
 
-	if indexFileInfo.Size()%indexBufSize > 0 || uint32(indexFileInfo.Size()/indexBufSize) != fh.indexFileWriter.writtenIndexNum {
+	if indexFileInfo.Size()%indexBufSize > 0 ||
+		uint32(indexFileInfo.Size() / indexBufSize) != fh.segFileGroupMsgWriter.indexFileWriter.writtenIndexNum {
 		fh.hasFileCorruption = true
 		return true, nil
 	}
 
-	dataFileInfo, err := fh.dataFileWriter.fp.Stat()
+	dataFileInfo, err := fh.segFileGroupMsgWriter.dataFileWriter.fp.Stat()
 	if err != nil {
 		return false, err
 	}
 
-	if uint32(dataFileInfo.Size()) != fh.dataFileWriter.writtenDataBytes {
+	if uint32(dataFileInfo.Size()) != fh.segFileGroupMsgWriter.dataFileWriter.writtenDataBytes {
 		fh.hasFileCorruption = true
 		return true, nil
 	}
@@ -161,9 +169,9 @@ func (fh *topicMultiFileHandler) sureWritableFiles() error {
 		fileSeq = buildFileSeq(time.Now(), msgstorages.GlobalFirstMsgOffset)
 	}
 
-	fh.fileSeq = fileSeq
+	fh.segFileGroupMsgWriter.fileSeq = fileSeq
 
-	if fh.fileSeqCreatedAt, fh.firstMsgOffset, err = parseCreatedAtAndFirstMsgOffsetFromSeq(fileSeq); err != nil {
+	if fh.segFileGroupMsgWriter.fileSeqCreatedAt, fh.segFileGroupMsgWriter.firstMsgOffset, err = parseCreatedAtAndFirstMsgOffsetFromSeq(fileSeq); err != nil {
 		return err
 	}
 
@@ -175,21 +183,20 @@ func (fh *topicMultiFileHandler) sureWritableFiles() error {
 			fh.hasFileCorruption = true
 			return errdef.FileCorruptionErr
 		}
-		fh.writtenIndexNum = uint32(indexFileSize / indexBufSize)
+		fh.segFileGroupMsgWriter.writtenIndexNum = uint32(indexFileSize / indexBufSize)
 
 		dataFileName := buildDataFileName(fh.topicName, fh.dir, dataFileSuffixName, fileSeq)
 		dataFileInfo, err := os.Stat(dataFileName)
 		if err != nil {
 			return err
 		}
-		fh.dataFileWriter.writtenDataBytes = uint32(dataFileInfo.Size())
+		fh.segFileGroupMsgWriter.dataFileWriter.writtenDataBytes = uint32(dataFileInfo.Size())
 
-		if fh.writtenIndexNum >= fh.indexFileWriter.maxWritableIndexNum || fh.writtenDataBytes >= fh.maxWritableDataBytes {
+		if fh.segFileGroupMsgWriter.writtenIndexNum >= fh.segFileGroupMsgWriter.indexFileWriter.maxWritableIndexNum ||
+			fh.segFileGroupMsgWriter.writtenDataBytes >= fh.segFileGroupMsgWriter.maxWritableDataBytes {
 			if err = fh.openNextSeqMsgFiles(); err != nil {
 				return err
 			}
-		} else {
-			fh.fileSeq = fileSeq
 		}
 	} else if !os.IsNotExist(err) {
 		return err
@@ -208,7 +215,7 @@ func (fh *topicMultiFileHandler) makeDataFp() (*os.File, error) {
 		return nil, err
 	}
 
-	fileName := buildDataFileName(fh.topicName, fh.dir, dataFileSuffixName, fh.fileSeq)
+	fileName := buildDataFileName(fh.topicName, fh.dir, dataFileSuffixName, fh.segFileGroupMsgWriter.fileSeq)
 	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
 		return nil, err
@@ -227,7 +234,7 @@ func (fh *topicMultiFileHandler) makeIndexFp() (*os.File, error) {
 		return nil, err
 	}
 
-	fileName := buildIndexFileName(fh.topicName, fh.dir, indexFileSuffixName, fh.fileSeq)
+	fileName := buildIndexFileName(fh.topicName, fh.dir, indexFileSuffixName, fh.segFileGroupMsgWriter.fileSeq)
 	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
 		return nil, err
@@ -247,11 +254,11 @@ func (fh *topicMultiFileHandler) makeIndexFp() (*os.File, error) {
 
 // 打开下个可写入消息文件序号
 func (fh *topicMultiFileHandler) openNextSeqMsgFiles() error {
-	firstMsgOffsetOfNewFileSeq := fh.firstMsgOffset + uint64(fh.writtenIndexNum)
+	firstMsgOffsetOfNewFileSeq := fh.segFileGroupMsgWriter.firstMsgOffset + uint64(fh.segFileGroupMsgWriter.writtenIndexNum)
 	newFileSeqCreatedAt := time.Now()
-	fh.fileSeq = buildFileSeq(newFileSeqCreatedAt, firstMsgOffsetOfNewFileSeq)
-	fh.firstMsgOffset = firstMsgOffsetOfNewFileSeq
-	fh.fileSeqCreatedAt = uint32(newFileSeqCreatedAt.Unix())
+	fh.segFileGroupMsgWriter.fileSeq = buildFileSeq(newFileSeqCreatedAt, firstMsgOffsetOfNewFileSeq)
+	fh.segFileGroupMsgWriter.firstMsgOffset = firstMsgOffsetOfNewFileSeq
+	fh.segFileGroupMsgWriter.fileSeqCreatedAt = uint32(newFileSeqCreatedAt.Unix())
 
 	indexFp, err := fh.makeIndexFp()
 	if err != nil {
@@ -276,14 +283,14 @@ func (fh *topicMultiFileHandler) openNextSeqMsgFiles() error {
 		return err
 	}
 
-	fh.indexFileWriter.fp = indexFp
-	fh.indexFileWriter.writtenIndexNum = uint32(writtenIndexBytes / indexBufSize)
-	fh.dataFileWriter.fp = dataFp
-	fh.dataFileWriter.writtenDataBytes = uint32(dataFileInfo.Size())
+	fh.segFileGroupMsgWriter.indexFileWriter.fp = indexFp
+	fh.segFileGroupMsgWriter.indexFileWriter.writtenIndexNum = uint32(writtenIndexBytes / indexBufSize)
+	fh.segFileGroupMsgWriter.dataFileWriter.fp = dataFp
+	fh.segFileGroupMsgWriter.dataFileWriter.writtenDataBytes = uint32(dataFileInfo.Size())
 
-	if fh.nextSeqFilesOpenEventCh != nil {
-		fh.nextSeqFilesOpenEventCh <- &nextSeqFilesOpenEvent{
-			fileSeq: fh.fileSeq,
+	if fh.segFileGroupMsgWriter.nextSeqFilesOpenEventCh != nil {
+		fh.segFileGroupMsgWriter.nextSeqFilesOpenEventCh <- &nextSeqFilesOpenEvent{
+			fileSeq: fh.segFileGroupMsgWriter.fileSeq,
 		}
 	}
 
@@ -293,8 +300,9 @@ func (fh *topicMultiFileHandler) openNextSeqMsgFiles() error {
 // 检查初始化前结构体不可为空字段
 func (fh *topicMultiFileHandler) assetRequiredFieldsBeforeInit() error {
 	if fh.topicName == "" || fh.syncToDiskInterval <= 0 ||
-		fh.indexFileWriter == nil || fh.dataFileWriter == nil ||
-		fh.indexFileWriter.maxWritableIndexNum == 0 || fh.maxWritableDataBytes == 0 || fh.dir == "" {
+		fh.segFileGroupMsgWriter.indexFileWriter == nil || fh.segFileGroupMsgWriter.dataFileWriter == nil ||
+		fh.segFileGroupMsgWriter.indexFileWriter.maxWritableIndexNum == 0 || fh.segFileGroupMsgWriter.maxWritableDataBytes == 0 ||
+		fh.dir == "" {
 		return errdef.MadeStructNotByNewFuncErr
 	}
 
@@ -303,7 +311,7 @@ func (fh *topicMultiFileHandler) assetRequiredFieldsBeforeInit() error {
 
 // 检查结构体是否确认了可写入文件序号
 func (fh *topicMultiFileHandler) assetConfirmedWritableFiles() error {
-	if fh.fileSeq != "" || fh.fileSeqCreatedAt > 0 {
+	if fh.segFileGroupMsgWriter.fileSeq != "" || fh.segFileGroupMsgWriter.fileSeqCreatedAt > 0 {
 		return nil
 	}
 
@@ -441,8 +449,8 @@ func (w *topicMsgWriter) writeMsgs(msgItems []*fileMsgWrapper) error {
 		for _, msgItem := range msgItems {
 			msgBytes := w.multiFileHandler.msgBufEncoder.getMsgsDataBufBytes([]*fileMsgWrapper{msgItem})
 			batchWritableMsgDataBufBytes += msgBytes
-			if w.multiFileHandler.indexFileWriter.writtenIndexNum + uint32(len(batchWritableMsgs)) >= w.multiFileHandler.indexFileWriter.maxWritableIndexNum ||
-				w.multiFileHandler.dataFileWriter.writtenDataBytes + batchWritableMsgDataBufBytes >= w.multiFileHandler.dataFileWriter.maxWritableDataBytes {
+			if w.multiFileHandler.segFileGroupMsgWriter.writtenIndexNum + uint32(len(batchWritableMsgs)) >= w.multiFileHandler.segFileGroupMsgWriter.maxWritableIndexNum ||
+				w.multiFileHandler.segFileGroupMsgWriter.writtenDataBytes + batchWritableMsgDataBufBytes >= w.multiFileHandler.segFileGroupMsgWriter.maxWritableDataBytes {
 				areMsgFilesFull = true
 				batchWritableMsgDataBufBytes -= msgBytes
 				break
@@ -461,7 +469,7 @@ func (w *topicMsgWriter) writeMsgs(msgItems []*fileMsgWrapper) error {
 				totalWrittenNum int
 			)
 			for {
-				writtenNum, err := w.multiFileHandler.dataFileWriter.fp.Write(dataBuf)
+				writtenNum, err := w.multiFileHandler.segFileGroupMsgWriter.dataFileWriter.fp.Write(dataBuf)
 				if err != nil {
 					return err
 				}
@@ -473,11 +481,11 @@ func (w *topicMsgWriter) writeMsgs(msgItems []*fileMsgWrapper) error {
 
 				dataBuf = dataBuf[writtenNum:]
 			}
-			w.multiFileHandler.dataFileWriter.writtenDataBytes += batchWritableMsgDataBufBytes
+			w.multiFileHandler.segFileGroupMsgWriter.writtenDataBytes += batchWritableMsgDataBufBytes
 
 			totalWrittenNum = 0
 			for {
-				writtenNum, err := w.multiFileHandler.indexFileWriter.fp.Write(indexesBuf)
+				writtenNum, err := w.multiFileHandler.segFileGroupMsgWriter.indexFileWriter.fp.Write(indexesBuf)
 				if err != nil {
 					return err
 				}
@@ -489,7 +497,7 @@ func (w *topicMsgWriter) writeMsgs(msgItems []*fileMsgWrapper) error {
 
 				indexesBuf = indexesBuf[writtenNum:]
 			}
-			w.multiFileHandler.indexFileWriter.writtenIndexNum += uint32(batchWritableMsgNum)
+			w.multiFileHandler.segFileGroupMsgWriter.indexFileWriter.writtenIndexNum += uint32(batchWritableMsgNum)
 
 			if len(msgItems) <= batchWritableMsgNum {
 				msgItems = nil
@@ -522,8 +530,8 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 		}
 		var (
 			msgItems                 []*fileMsgWrapper
-			allocNextMsgOffset        = w.multiFileHandler.firstMsgOffset + uint64(w.multiFileHandler.writtenIndexNum)
-			allocNextMsgDataOffset    = w.multiFileHandler.writtenDataBytes
+			allocNextMsgOffset        = w.multiFileHandler.segFileGroupMsgWriter.firstMsgOffset + uint64(w.multiFileHandler.segFileGroupMsgWriter.writtenIndexNum)
+			allocNextMsgDataOffset    = w.multiFileHandler.segFileGroupMsgWriter.writtenDataBytes
 			writtenMsgEventChWrappers []*writtenMsgEventChWrapper
 		)
 
@@ -546,7 +554,7 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 			})
 			msgItem := &fileMsgWrapper{
 				msg: msgClone,
-				fileSeq: w.multiFileHandler.fileSeq,
+				fileSeq: w.multiFileHandler.segFileGroupMsgWriter.fileSeq,
 				dataOffset: allocNextMsgDataOffset,
 			}
 			msgItems = append(msgItems, msgItem)

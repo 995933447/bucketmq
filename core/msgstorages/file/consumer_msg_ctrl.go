@@ -2,14 +2,14 @@ package file
 
 import (
 	"context"
+	"github.com/995933447/bucketmq/core/log"
 	"github.com/995933447/bucketmq/core/msgstorages"
 	"github.com/995933447/bucketmq/core/utils/structs"
 	errdef "github.com/995933447/bucketmqerrdef"
 	"io"
-	"github.com/995933447/bucketmq/core/log"
 )
 
-type consumerMsgLoaderPerFileSeq struct {
+type consumerSegFileGroupMsgLoader struct {
 	// 索引文件读取器
 	*indexFileReader
 	// 数据文件读取器
@@ -36,7 +36,7 @@ type consumerMsgLoaderPerFileSeq struct {
 	finishInit bool
 }
 
-func (l *consumerMsgLoaderPerFileSeq) load() ([]*fileMsgWrapper, error) {
+func (l *consumerSegFileGroupMsgLoader) load() ([]*fileMsgWrapper, error) {
 	if err := l.loadDoneMsgOffsets(); err != nil {
 		return nil, err
 	}
@@ -47,7 +47,7 @@ func (l *consumerMsgLoaderPerFileSeq) load() ([]*fileMsgWrapper, error) {
 	return msgItems, nil
 }
 
-func (l *consumerMsgLoaderPerFileSeq) loadDoneMsgOffsets() error {
+func (l *consumerSegFileGroupMsgLoader) loadDoneMsgOffsets() error {
 	buf := make([]byte, 10240 * doneMetadataBufSize, 10240 * doneMetadataBufSize)
 	_, err := l.doneFileRWriter.fp.Seek(0, io.SeekStart)
 	if err != nil {
@@ -80,7 +80,7 @@ func (l *consumerMsgLoaderPerFileSeq) loadDoneMsgOffsets() error {
 	return nil
 }
 
-func (l *consumerMsgLoaderPerFileSeq) loadMsgs() ([]*fileMsgWrapper, error) {
+func (l *consumerSegFileGroupMsgLoader) loadMsgs() ([]*fileMsgWrapper, error) {
 	var (
 		msgBuf = make([]byte, 1024 * 1024 * indexBufSize)
 		maxIndexOffset = int64(l.indexFileReader.indexNum - 1)
@@ -139,7 +139,7 @@ func (l *consumerMsgLoaderPerFileSeq) loadMsgs() ([]*fileMsgWrapper, error) {
 	return allLoaded, nil
 }
 
-func (l *consumerMsgLoaderPerFileSeq) close(ctx context.Context) error {
+func (l *consumerSegFileGroupMsgLoader) close(ctx context.Context) error {
 	if err := l.indexFileReader.fp.Close(); err != nil {
 		l.Logger.Warn(ctx, err)
 	}
@@ -155,11 +155,11 @@ func (l *consumerMsgLoaderPerFileSeq) close(ctx context.Context) error {
 
 type consumerMultiFileHandler struct {
 	// 每个文件序号的消息载入器
-	consumerMsgLoaders []*consumerMsgLoaderPerFileSeq
+	consumerMsgLoaders []*consumerSegFileGroupMsgLoader
 	// 消费组历史首次消费的开始位移检查文件读写器
 	*startOffsetCheckFileRWriter
 	// 预加载多少消息文件序号
-	NumOfPreloadMsgFileSeqs uint32
+	numOfPreloadMsgSegFileGroup uint32
 	// 文件目录
 	dir string
 	// 消息编码器

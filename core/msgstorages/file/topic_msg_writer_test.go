@@ -19,7 +19,7 @@ func TestInitTopicMsgWriter(t *testing.T) {
 func mockTopicMsgWriter() (*topicMsgWriter, error) {
 	return newTopicMsgWriter(
 		"test_topic",
-		"/data/bucketmqtest11",
+		"/data/bucketmqtest12",
 		2,
 		100,
 		5,
