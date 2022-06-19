@@ -2,21 +2,25 @@ package file
 
 import (
 	"encoding/binary"
+	errdef "github.com/995933447/bucketmqerrdef"
 )
 
 const (
-	bufBeginBoundary = 0x12
-	bufEndBoundary   = 0x34
+	bufBeginBoundary byte = 0x12
+	bufEndBoundary byte = 0x34
 )
 
 const (
 	// 0x12 + 0x34 = 2 bytes
 	bufBoundarySize = 2
-	// indexes buf len: Bucket(4 bytes) + CreatedAt(4 bytes) + Priority(1 byte)
-	//	+ DelaySeconds(4 bytes) + ExpireAt(4 bytes) + DataOffset(4 bytes)
-	//	+ DataLen(4 bytes) + MsgIdLen(16 bytes) + MsgOffset(8 bytes) + bufBoundarySize(2 bytes) = 51 bytes
+	// Bucket(4 bytes) + CreatedAt(4 bytes) + Priority(1 byte)
+	// + DelaySeconds(4 bytes) + ExpireAt(4 bytes) + DataOffset(4 bytes)
+	// + DataLen(4 bytes) + MsgIdLen(16 bytes) + MsgOffset(8 bytes) + bufBoundarySize(2 bytes) = 51 bytes
 	indexBufSize  = 51
-	doneMetadataBufSize = 12
+	// MsgOffset(8 bytes) + DoneAt(4 bytes) + bufBoundarySize(2 bytes)
+	doneMetadataBufSize = 14
+	// MsgOffset(8 bytes)
+	attemptCntMetaBufSize = 13
 )
 
 type msgBufEncoder struct {
@@ -81,7 +85,7 @@ func (e *msgBufEncoder) encodeMsgs(msgItems []*fileMsgWrapper) (indexesBuf []byt
 	return
 }
 
-func (e *msgBufEncoder) decodeIndexes(buf []byte) []*fileMsgWrapper {
+func (e *msgBufEncoder) decodeIndexes(buf []byte) ([]*fileMsgWrapper, error) {
 	//var (
 	//	msgItems []*fileMsgWrapper
 	//	completeBufLen = len(buf)
@@ -92,25 +96,37 @@ func (e *msgBufEncoder) decodeIndexes(buf []byte) []*fileMsgWrapper {
 	//		buf = buf[i:]
 	//	)
 	//}
-	return nil
+	return nil, nil
 }
 
-func (e *msgBufEncoder) decodeData(buf []byte) []byte {
-	return nil
+func (e *msgBufEncoder) decodeData(buf []byte) ([]byte, error) {
+	return nil, nil
 }
 
-func (e *msgBufEncoder) decodeDoneMetadata(buf []byte) []*doneFileMsgMetadataWrapper {
+func (e *msgBufEncoder) decodeDoneMetadata(buf []byte) ([]*doneFileMsgMetadataWrapper, error) {
 	metadataNum := len(buf) / doneMetadataBufSize
 	doneMetadataList := make([]*doneFileMsgMetadataWrapper, 0, metadataNum)
 	endian := binary.LittleEndian
 	completeBufLen := len(buf)
 	for i := 0; i < completeBufLen; i += doneMetadataBufSize {
 		buf = buf[i:]
+		beginBoundary := buf[0]
+		if beginBoundary != bufBeginBoundary {
+			return nil, errdef.BufCorruptionErr
+		}
+		endBoundary := buf[13]
+		if endBoundary != bufEndBoundary {
+			return nil, errdef.BufCorruptionErr
+		}
+
 		doneMetadata := &doneFileMsgMetadataWrapper{}
-		doneMetadata.msgOffset = endian.Uint64(buf[:8])
-		doneMetadata.doneAt = endian.Uint32(buf[8:12])
+		doneMetadata.msgOffset = endian.Uint64(buf[1:9])
+		doneMetadata.doneAt = endian.Uint32(buf[9:13])
 		doneMetadataList = append(doneMetadataList, doneMetadata)
 	}
-	return doneMetadataList
+	return doneMetadataList, nil
 }
 
+func (e *msgBufEncoder) decodeAttemptMetadata(buf []byte) ([]*attemptFileMsgMetadataWrapper, error) {
+	return nil, nil
+}

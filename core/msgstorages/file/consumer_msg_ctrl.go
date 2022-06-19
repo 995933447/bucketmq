@@ -4,9 +4,11 @@ import (
 	"context"
 	"github.com/995933447/bucketmq/core/log"
 	"github.com/995933447/bucketmq/core/msgstorages"
+	"github.com/995933447/bucketmq/core/utils/fileutil"
 	"github.com/995933447/bucketmq/core/utils/structs"
 	errdef "github.com/995933447/bucketmqerrdef"
 	"io"
+	"os"
 )
 
 type consumerSegFileGroupMsgLoader struct {
@@ -31,24 +33,125 @@ type consumerSegFileGroupMsgLoader struct {
 	// 是否已经关闭
 	isClosed bool
 	// 日志
-	log.Logger
+	logger log.Logger
+	// 关联的多文件处理器
+	multiFileHandler *topicMultiFileHandler
 	// 是否已经初始化
 	finishInit bool
+}
+
+func newConsumerSegFileGroupMsgLoader(fileSeq string, msgBufEncoder *msgBufEncoder, logger log.Logger) (*consumerSegFileGroupMsgLoader, error) {
+	loader := &consumerSegFileGroupMsgLoader{
+		fileSeq: fileSeq,
+		msgBufEncoder: msgBufEncoder,
+		logger: logger,
+	}
+
+	if err := loader.init(); err != nil {
+		return nil, err
+	}
+
+	return loader, nil
+}
+
+func (l *consumerSegFileGroupMsgLoader) init() error {
+	if l.finishInit {
+		return nil
+	}
+
+	var err error
+
+	if err = l.assetRequiredFieldsBeforeInit(); err != nil {
+		return err
+	}
+
+	if l.fileSeqCreatedAt, l.firstMsgOffset, err = parseCreatedAtAndFirstMsgOffsetFromSeq(l.fileSeq); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (l *consumerSegFileGroupMsgLoader) assetRequiredFieldsBeforeInit() error {
+	if l.fileSeq == "" || l.msgBufEncoder == nil || l.logger == nil {
+		return errdef.MadeStructNotByNewFuncErr
+	}
+
+	return nil
+}
+
+// 构造数据文件句柄
+func (l *consumerSegFileGroupMsgLoader) newDataFp() (*os.File, error) {
+	if err := fileutil.MkdirIfNotExist(l.multiFileHandler.dir); err != nil {
+		return nil, err
+	}
+
+	fileName := buildDataFileName(l.multiFileHandler.topicName, l.multiFileHandler.dir, dataFileSuffixName, l.fileSeq)
+	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
+	if err != nil {
+		return nil, err
+	}
+
+	return fp, nil
+}
+
+// 构造索引文件句柄
+func (l *consumerSegFileGroupMsgLoader) newIndexFp() (*os.File, error) {
+	if err := fileutil.MkdirIfNotExist(l.multiFileHandler.dir); err != nil {
+		return nil, err
+	}
+
+	fileName := buildIndexFileName(l.multiFileHandler.topicName, l.multiFileHandler.dir, indexFileSuffixName, l.fileSeq)
+
+	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
+	if err != nil {
+		return nil, err
+	}
+
+	fileInfo, err := fp.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if fileInfo.IsDir() {
+		return nil, errdef.FileIsNotRegularFileErr
+	}
+
+	return fp, nil
+}
+
+
+func (l *consumerSegFileGroupMsgLoader) syncToDisk() error {
+	if err := l.doneFileRWriter.fp.Sync(); err != nil {
+		return err
+	}
+	if err := l.attemptFileRWriter.fp.Sync(); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (l *consumerSegFileGroupMsgLoader) load() ([]*fileMsgWrapper, error) {
 	if err := l.loadDoneMsgOffsets(); err != nil {
 		return nil, err
 	}
-	msgItems, err := l.loadMsgs()
+
+	msgOffsetToAttemptCntMap, err := l.loadMsgAttemptCnt()
 	if err != nil {
 		return nil, err
 	}
+
+	msgItems, err := l.loadMsgs(msgOffsetToAttemptCntMap, l.doneMsgOffsetSet)
+	if err != nil {
+		return nil, err
+	}
+
 	return msgItems, nil
 }
 
 func (l *consumerSegFileGroupMsgLoader) loadDoneMsgOffsets() error {
 	buf := make([]byte, 10240 * doneMetadataBufSize, 10240 * doneMetadataBufSize)
+
 	_, err := l.doneFileRWriter.fp.Seek(0, io.SeekStart)
 	if err != nil {
 		return err
@@ -71,7 +174,11 @@ func (l *consumerSegFileGroupMsgLoader) loadDoneMsgOffsets() error {
 			continue
 		}
 
-		doneMetadataList := l.msgBufEncoder.decodeDoneMetadata(buf[:n])
+		doneMetadataList, err := l.msgBufEncoder.decodeDoneMetadata(buf[:n])
+		if err != nil {
+			return err
+		}
+
 		for _, doneMetadata := range doneMetadataList {
 			l.doneMsgOffsetSet.Put(doneMetadata.msgOffset)
 		}
@@ -80,21 +187,61 @@ func (l *consumerSegFileGroupMsgLoader) loadDoneMsgOffsets() error {
 	return nil
 }
 
-func (l *consumerSegFileGroupMsgLoader) loadMsgs() ([]*fileMsgWrapper, error) {
+func (l *consumerSegFileGroupMsgLoader) loadMsgAttemptCnt() (msgOffsetToAttemptCntMap map[uint64]uint32, err error) {
+	buf := make([]byte, 10240 * doneMetadataBufSize, 10240 * doneMetadataBufSize)
+
+	_, err = l.attemptFileRWriter.fp.Seek(0, io.SeekStart)
+	if err != nil {
+		return
+	}
+
+	for {
+		var n int
+		n, err = l.attemptFileRWriter.fp.Read(buf)
+		if err != nil {
+			if err == io.EOF {
+				break
+			}
+			return
+		}
+
+		if n % doneMetadataBufSize != 0 {
+			err = errdef.FileCorruptionErr
+			return
+		}
+
+		if n == 0 {
+			continue
+		}
+
+		var attemptMetadataList []*attemptFileMsgMetadataWrapper
+		attemptMetadataList, err = l.msgBufEncoder.decodeAttemptMetadata(buf[:n])
+		if err != nil {
+			return
+		}
+		for _, attemptMetadata := range attemptMetadataList {
+			msgOffsetToAttemptCntMap[attemptMetadata.msgOffset] = attemptMetadata.attemptCnt
+		}
+	}
+
+	return msgOffsetToAttemptCntMap, nil
+}
+
+func (l *consumerSegFileGroupMsgLoader) loadMsgs(msgOffsetToAttemptCntMap map[uint64]uint32, doneMsgOffsetSet *structs.Uint64Set) ([]*fileMsgWrapper, error) {
 	var (
 		msgBuf = make([]byte, 1024 * 1024 * indexBufSize)
-		maxIndexOffset = int64(l.indexFileReader.indexNum - 1)
 		allLoaded []*fileMsgWrapper
 	)
+
 	for {
-		indexOffset := l.indexFileReader.cursor / int64(indexBufSize)
-		if indexOffset >= maxIndexOffset {
+		loadedIndexNum := uint32(l.indexFileReader.cursor / int64(indexBufSize))
+		if loadedIndexNum >= l.indexNum {
 			break
 		}
 
-		nextLoadMsgOffset := uint64(indexOffset) + l.firstMsgOffset
-		l.indexFileReader.cursor += indexBufSize
-		if l.doneMsgOffsetSet.Exist(nextLoadMsgOffset) {
+		nextLoadMsgOffset := uint64(loadedIndexNum) + l.firstMsgOffset
+		if doneMsgOffsetSet.Exist(nextLoadMsgOffset) {
+			l.indexFileReader.cursor += indexBufSize
 			continue
 		}
 
@@ -107,8 +254,10 @@ func (l *consumerSegFileGroupMsgLoader) loadMsgs() ([]*fileMsgWrapper, error) {
 			return nil, errdef.FileCorruptionErr
 		}
 
-
-		msgItems := l.msgBufEncoder.decodeIndexes(msgBuf[:n])
+		msgItems, err := l.msgBufEncoder.decodeIndexes(msgBuf[:n])
+		if err != nil {
+			return nil, err
+		}
 
 		for _, msgItem := range msgItems {
 			dataBuf := make([]byte, l.msgBufEncoder.getMsgsDataBufBytes([]*fileMsgWrapper{msgItem}))
@@ -117,7 +266,21 @@ func (l *consumerSegFileGroupMsgLoader) loadMsgs() ([]*fileMsgWrapper, error) {
 				return nil, err
 			}
 
-			msgMetadata := msgItem.msg.GetMetadata()
+			var msgData []byte
+			msgData, err = l.msgBufEncoder.decodeData(dataBuf)
+			if err != nil {
+				return nil, err
+			}
+
+			var (
+				msgMetadata = msgItem.msg.GetMetadata()
+				msgRetryCnt uint32
+			)
+
+			if msgAttemptCnt := msgOffsetToAttemptCntMap[msgMetadata.GetMsgOffset()]; msgAttemptCnt > 0 {
+				msgRetryCnt = msgAttemptCnt - 1
+			}
+
 			newMsgReq := &msgstorages.NewMsgReq{
 				Bucket: msgMetadata.GetBucket(),
 				CreatedAt: msgMetadata.GetCreatedAt(),
@@ -126,14 +289,15 @@ func (l *consumerSegFileGroupMsgLoader) loadMsgs() ([]*fileMsgWrapper, error) {
 				Id: msgMetadata.GetMsgId(),
 				ExpireAt: msgMetadata.GetExpireAt(),
 				MsgOffset: msgMetadata.GetMsgOffset(),
-				RetryCnt: msgMetadata.GetRetryCnt(),
+				RetryCnt: msgRetryCnt,
 				ExpectRetryAt: msgMetadata.GetExpectRetryAt(),
+				Data: msgData,
 			}
-			newMsgReq.Data = l.msgBufEncoder.decodeData(dataBuf)
 			msgItem.msg = msgstorages.NewMsg(newMsgReq)
 		}
 
 		allLoaded = append(allLoaded, msgItems...)
+		l.cursor += int64(n)
 	}
 
 	return allLoaded, nil
@@ -141,13 +305,13 @@ func (l *consumerSegFileGroupMsgLoader) loadMsgs() ([]*fileMsgWrapper, error) {
 
 func (l *consumerSegFileGroupMsgLoader) close(ctx context.Context) error {
 	if err := l.indexFileReader.fp.Close(); err != nil {
-		l.Logger.Warn(ctx, err)
+		l.logger.Warn(ctx, err)
 	}
 	if err := l.dataFileReader.fp.Close(); err != nil {
-		l.Logger.Warn(ctx, err)
+		l.logger.Warn(ctx, err)
 	}
 	if err := l.doneFileRWriter.fp.Close(); err != nil {
-		l.Logger.Warn(ctx, err)
+		l.logger.Warn(ctx, err)
 	}
 	l.isClosed = true
 	return nil

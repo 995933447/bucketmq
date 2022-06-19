@@ -17,7 +17,7 @@ type doneFileMsgMetadataWrapper struct {
 }
 
 type attemptFileMsgMetadataWrapper struct {
-	msgOffset uint32
+	msgOffset uint64
 	attemptCnt uint32
 	lastAttemptedAt uint32
 	nextAttemptedAt uint32

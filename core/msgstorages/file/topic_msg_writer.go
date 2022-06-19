@@ -31,6 +31,269 @@ type topicSegFileGroupMsgWriter struct {
 	firstMsgOffset uint64
 	// 发送有新的写入文件被打开的通知的chan
 	nextSeqFilesOpenEventCh chan *nextSeqFilesOpenEvent
+	// 多联的多文件处理器
+	multiFileHandler *topicMultiFileHandler
+	// 是否已经完成初始化
+	finishInit bool
+}
+
+func newTopicSegFileGroupMsgWriter(maxWritableMsgNum, maxWritableMsgDataBytes uint32, multiFileHandler *topicMultiFileHandler) (*topicSegFileGroupMsgWriter, error) {
+	writer := &topicSegFileGroupMsgWriter{
+		indexFileWriter: &indexFileWriter{
+			maxWritableIndexNum: maxWritableMsgNum,
+		},
+		dataFileWriter: &dataFileWriter{
+			maxWritableDataBytes: maxWritableMsgDataBytes,
+		},
+		multiFileHandler: multiFileHandler,
+	}
+
+	if err := writer.init(); err != nil {
+		return nil, err
+	}
+
+	return writer, nil
+}
+
+func (gw *topicSegFileGroupMsgWriter) init() error {
+	if err := gw.assetRequiredFieldsBeforeInit(); err != nil {
+		return err
+	}
+
+	if err := gw.sureWritableFiles(); err != nil {
+		return err
+	}
+
+	indexFp, err := gw.newIndexFp()
+	if err != nil {
+		return err
+	}
+	indexFileInfo, err := indexFp.Stat()
+	if err != nil {
+		return err
+	}
+	writtenIndexBytes := indexFileInfo.Size()
+	if writtenIndexBytes % indexBufSize > 0 {
+		gw.multiFileHandler.hasFileCorruption = true
+		return errdef.FileCorruptionErr
+	}
+
+	dataFp, err := gw.newDataFp()
+	if err != nil {
+		return err
+	}
+	dataFileInfo, err := dataFp.Stat()
+	if err != nil {
+		return err
+	}
+
+	gw.indexFileWriter.fp = indexFp
+	gw.dataFileWriter.fp = dataFp
+	gw.indexFileWriter.writtenIndexNum = uint32(writtenIndexBytes / indexBufSize)
+	gw.writtenDataBytes = uint32(dataFileInfo.Size())
+	gw.nextSeqFilesOpenEventCh = make(chan *nextSeqFilesOpenEvent, 10000)
+	gw.finishInit = true
+
+	return nil
+}
+
+// 检查初始化前结构体不可为空字段
+func (gw *topicSegFileGroupMsgWriter) assetRequiredFieldsBeforeInit() error {
+	if gw.maxWritableIndexNum == 0 || gw.maxWritableDataBytes == 0 || gw.multiFileHandler == nil {
+		return errdef.MadeStructNotByNewFuncErr
+	}
+
+	return nil
+}
+
+func (gw *topicSegFileGroupMsgWriter) syncToDisk() error {
+	if err := gw.indexFileWriter.fp.Sync(); err != nil {
+		return err
+	}
+	if err := gw.dataFileWriter.fp.Sync(); err != nil {
+		return err
+	}
+	return nil
+}
+
+// 确定可写入文件序号
+func (gw *topicSegFileGroupMsgWriter) sureWritableFiles() error {
+	if err := fileutil.MkdirIfNotExist(gw.multiFileHandler.dir); err != nil {
+		return err
+	}
+
+	fileSeq, err := calMaxFileSeqFromDir(gw.multiFileHandler.dir, gw.multiFileHandler.topicName, indexFileSuffixName)
+	if err != nil {
+		if err != errdef.FileSeqNotFoundErr {
+			return err
+		}
+		fileSeq = buildFileSeq(time.Now(), msgstorages.GlobalFirstMsgOffset)
+	}
+
+	gw.fileSeq = fileSeq
+
+	if gw.fileSeqCreatedAt, gw.firstMsgOffset, err = parseCreatedAtAndFirstMsgOffsetFromSeq(fileSeq); err != nil {
+		return err
+	}
+
+	indexFileName := buildIndexFileName(gw.multiFileHandler.topicName, gw.multiFileHandler.dir, indexFileSuffixName, fileSeq)
+	indexFileInfo, err := os.Stat(indexFileName)
+	if err == nil {
+		indexFileSize := indexFileInfo.Size()
+		if indexFileSize % indexBufSize > 0 {
+			gw.multiFileHandler.hasFileCorruption = true
+			return errdef.FileCorruptionErr
+		}
+		gw.writtenIndexNum = uint32(indexFileSize / indexBufSize)
+
+		dataFileName := buildDataFileName(gw.multiFileHandler.topicName, gw.multiFileHandler.dir, dataFileSuffixName, fileSeq)
+		dataFileInfo, err := os.Stat(dataFileName)
+		if err != nil {
+			return err
+		}
+
+		gw.dataFileWriter.writtenDataBytes = uint32(dataFileInfo.Size())
+		if gw.writtenIndexNum >= gw.indexFileWriter.maxWritableIndexNum ||
+			gw.writtenDataBytes >= gw.maxWritableDataBytes {
+			if err = gw.openNextSeqMsgFiles(); err != nil {
+				return err
+			}
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	return nil
+}
+
+// 打开下个可写入消息文件序号
+func (gw *topicSegFileGroupMsgWriter) openNextSeqMsgFiles() error {
+	firstMsgOffsetOfNewFileSeq := gw.firstMsgOffset + uint64(gw.writtenIndexNum)
+	newFileSeqCreatedAt := time.Now()
+	gw.fileSeq = buildFileSeq(newFileSeqCreatedAt, firstMsgOffsetOfNewFileSeq)
+	gw.firstMsgOffset = firstMsgOffsetOfNewFileSeq
+	gw.fileSeqCreatedAt = uint32(newFileSeqCreatedAt.Unix())
+
+	indexFp, err := gw.newIndexFp()
+	if err != nil {
+		return err
+	}
+	indexFileInfo, err := indexFp.Stat()
+	if err != nil {
+		return err
+	}
+	writtenIndexBytes := indexFileInfo.Size()
+	if writtenIndexBytes % indexBufSize > 0 {
+		gw.multiFileHandler.hasFileCorruption = true
+		return errdef.FileCorruptionErr
+	}
+
+	dataFp, err := gw.newDataFp()
+	if err != nil {
+		return err
+	}
+	dataFileInfo, err := dataFp.Stat()
+	if err != nil {
+		return err
+	}
+
+	gw.indexFileWriter.fp = indexFp
+	gw.writtenIndexNum = uint32(writtenIndexBytes / indexBufSize)
+	gw.dataFileWriter.fp = dataFp
+	gw.writtenDataBytes = uint32(dataFileInfo.Size())
+
+	if gw.nextSeqFilesOpenEventCh != nil {
+		gw.nextSeqFilesOpenEventCh <- &nextSeqFilesOpenEvent{
+			fileSeq: gw.fileSeq,
+		}
+	}
+
+	return nil
+}
+
+// 构造数据文件句柄
+func (gw *topicSegFileGroupMsgWriter) newDataFp() (*os.File, error) {
+	if err := gw.assetConfirmedWritableFiles(); err != nil {
+		return nil, err
+	}
+
+	if err := fileutil.MkdirIfNotExist(gw.multiFileHandler.dir); err != nil {
+		return nil, err
+	}
+
+	fileName := buildDataFileName(gw.multiFileHandler.topicName, gw.multiFileHandler.dir, dataFileSuffixName, gw.fileSeq)
+	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
+	if err != nil {
+		return nil, err
+	}
+
+	return fp, nil
+}
+
+// 构造索引文件句柄
+func (gw *topicSegFileGroupMsgWriter) newIndexFp() (*os.File, error) {
+	if err := gw.assetConfirmedWritableFiles(); err != nil {
+		return nil, err
+	}
+
+	if err := fileutil.MkdirIfNotExist(gw.multiFileHandler.dir); err != nil {
+		return nil, err
+	}
+
+	fileName := buildIndexFileName(gw.multiFileHandler.topicName, gw.multiFileHandler.dir, indexFileSuffixName, gw.fileSeq)
+
+	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
+	if err != nil {
+		return nil, err
+	}
+
+	fileInfo, err := fp.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if fileInfo.IsDir() {
+		return nil, errdef.FileIsNotRegularFileErr
+	}
+
+	return fp, nil
+}
+
+// 检查文件是否被污染
+func (gw *topicSegFileGroupMsgWriter) checkForCorruptFiles() (bool, error) {
+	indexFileInfo, err := gw.indexFileWriter.fp.Stat()
+	if err != nil {
+		return false, err
+	}
+
+	if indexFileInfo.Size()%indexBufSize > 0 ||
+		uint32(indexFileInfo.Size() / indexBufSize) != gw.indexFileWriter.writtenIndexNum {
+		gw.multiFileHandler.hasFileCorruption = true
+		return true, nil
+	}
+
+	dataFileInfo, err := gw.dataFileWriter.fp.Stat()
+	if err != nil {
+		return false, err
+	}
+
+	if uint32(dataFileInfo.Size()) != gw.dataFileWriter.writtenDataBytes {
+		gw.multiFileHandler.hasFileCorruption = true
+		return true, nil
+	}
+
+	gw.multiFileHandler.hasFileCorruption = false
+
+	return false, nil
+}
+
+// 检查结构体是否确认了可写入文件序号
+func (gw *topicSegFileGroupMsgWriter) assetConfirmedWritableFiles() error {
+	if gw.fileSeq != "" || gw.fileSeqCreatedAt > 0 {
+		return nil
+	}
+
+	return errdef.NewErr(errdef.ErrCodeAssetStructFailed, "must call *consumerSegFileGroupMsgLoader.ConfirmWritableFiles(context.Context) to confirm writable files.")
 }
 
 // topic消息文件处理器
@@ -52,20 +315,26 @@ type topicMultiFileHandler struct {
 }
 
 // 构造函数
-func newTopicMultiFileHandler(topicName, dir string, maxWritableMsgNum, maxWritableMsgDataBytes uint32, syncToDiskInterval time.Duration) *topicMultiFileHandler {
-	return &topicMultiFileHandler{
-		topicName: topicName,
-		dir:       dir,
-		segFileGroupMsgWriter: &topicSegFileGroupMsgWriter{
-			indexFileWriter: &indexFileWriter{
-				maxWritableIndexNum: maxWritableMsgNum,
-			},
-			dataFileWriter: &dataFileWriter{
-				maxWritableDataBytes: maxWritableMsgDataBytes,
-			},
-		},
-		syncToDiskInterval: syncToDiskInterval,
+func newTopicMultiFileHandler(topicName, dir string, maxWritableMsgNum, maxWritableMsgDataBytes uint32, syncToDiskInterval time.Duration) (*topicMultiFileHandler, error) {
+	var(
+		handler = &topicMultiFileHandler{
+			topicName: topicName,
+			dir:       dir,
+			syncToDiskInterval: syncToDiskInterval,
+		}
+		err error
+	)
+
+	handler.segFileGroupMsgWriter, err = newTopicSegFileGroupMsgWriter(maxWritableMsgNum, maxWritableMsgDataBytes, handler)
+	if err != nil {
+		return nil, err
 	}
+
+	if err = handler.init(); err != nil {
+		return nil, err
+	}
+
+	return handler, nil
 }
 
 // 文件写入处理器包装器初始化工作
@@ -78,39 +347,7 @@ func (fh *topicMultiFileHandler) init() error {
 		return err
 	}
 
-	if err := fh.sureWritableFiles(); err != nil {
-		return err
-	}
-
-	indexFp, err := fh.makeIndexFp()
-	if err != nil {
-		return err
-	}
-	indexFileInfo, err := indexFp.Stat()
-	if err != nil {
-		return err
-	}
-	writtenIndexBytes := indexFileInfo.Size()
-	if writtenIndexBytes % indexBufSize > 0 {
-		fh.hasFileCorruption = true
-		return errdef.FileCorruptionErr
-	}
-
-	dataFp, err := fh.makeDataFp()
-	if err != nil {
-		return err
-	}
-	dataFileInfo, err := dataFp.Stat()
-	if err != nil {
-		return err
-	}
-
-	fh.segFileGroupMsgWriter.indexFileWriter.fp = indexFp
-	fh.segFileGroupMsgWriter.dataFileWriter.fp = dataFp
-	fh.segFileGroupMsgWriter.indexFileWriter.writtenIndexNum = uint32(writtenIndexBytes / indexBufSize)
-	fh.segFileGroupMsgWriter.writtenDataBytes = uint32(dataFileInfo.Size())
 	fh.msgBufEncoder = &msgBufEncoder{}
-	fh.segFileGroupMsgWriter.nextSeqFilesOpenEventCh = make(chan *nextSeqFilesOpenEvent, 10000)
 	fh.finishInit = true
 
 	return nil
@@ -118,10 +355,7 @@ func (fh *topicMultiFileHandler) init() error {
 
 // 同步文件消息数据到磁盘
 func (fh *topicMultiFileHandler) syncToDisk() error {
-	if err := fh.segFileGroupMsgWriter.indexFileWriter.fp.Sync(); err != nil {
-		return err
-	}
-	if err := fh.segFileGroupMsgWriter.dataFileWriter.fp.Sync(); err != nil {
+	if err := fh.segFileGroupMsgWriter.syncToDisk(); err != nil {
 		return err
 	}
 	return nil
@@ -129,193 +363,16 @@ func (fh *topicMultiFileHandler) syncToDisk() error {
 
 // 检查文件是否被污染
 func (fh *topicMultiFileHandler) checkForCorruptFiles() (bool, error) {
-	indexFileInfo, err := fh.segFileGroupMsgWriter.indexFileWriter.fp.Stat()
-	if err != nil {
-		return false, err
-	}
-
-	if indexFileInfo.Size()%indexBufSize > 0 ||
-		uint32(indexFileInfo.Size() / indexBufSize) != fh.segFileGroupMsgWriter.indexFileWriter.writtenIndexNum {
-		fh.hasFileCorruption = true
-		return true, nil
-	}
-
-	dataFileInfo, err := fh.segFileGroupMsgWriter.dataFileWriter.fp.Stat()
-	if err != nil {
-		return false, err
-	}
-
-	if uint32(dataFileInfo.Size()) != fh.segFileGroupMsgWriter.dataFileWriter.writtenDataBytes {
-		fh.hasFileCorruption = true
-		return true, nil
-	}
-
-	fh.hasFileCorruption = false
-
-	return false, nil
-}
-
-// 确定可写入文件序号
-func (fh *topicMultiFileHandler) sureWritableFiles() error {
-	if err := fileutil.MkdirIfNotExist(fh.dir); err != nil {
-		return err
-	}
-
-	fileSeq, err := calMaxFileSeqFromDir(fh.dir, fh.topicName, indexFileSuffixName)
-	if err != nil {
-		if err != errdef.FileSeqNotFoundErr {
-			return err
-		}
-		fileSeq = buildFileSeq(time.Now(), msgstorages.GlobalFirstMsgOffset)
-	}
-
-	fh.segFileGroupMsgWriter.fileSeq = fileSeq
-
-	if fh.segFileGroupMsgWriter.fileSeqCreatedAt, fh.segFileGroupMsgWriter.firstMsgOffset, err = parseCreatedAtAndFirstMsgOffsetFromSeq(fileSeq); err != nil {
-		return err
-	}
-
-	indexFileName := buildIndexFileName(fh.topicName, fh.dir, indexFileSuffixName, fileSeq)
-	indexFileInfo, err := os.Stat(indexFileName)
-	if err == nil {
-		indexFileSize := indexFileInfo.Size()
-		if indexFileSize % indexBufSize > 0 {
-			fh.hasFileCorruption = true
-			return errdef.FileCorruptionErr
-		}
-		fh.segFileGroupMsgWriter.writtenIndexNum = uint32(indexFileSize / indexBufSize)
-
-		dataFileName := buildDataFileName(fh.topicName, fh.dir, dataFileSuffixName, fileSeq)
-		dataFileInfo, err := os.Stat(dataFileName)
-		if err != nil {
-			return err
-		}
-		fh.segFileGroupMsgWriter.dataFileWriter.writtenDataBytes = uint32(dataFileInfo.Size())
-
-		if fh.segFileGroupMsgWriter.writtenIndexNum >= fh.segFileGroupMsgWriter.indexFileWriter.maxWritableIndexNum ||
-			fh.segFileGroupMsgWriter.writtenDataBytes >= fh.segFileGroupMsgWriter.maxWritableDataBytes {
-			if err = fh.openNextSeqMsgFiles(); err != nil {
-				return err
-			}
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	return nil
-}
-
-// 构造数据文件句柄
-func (fh *topicMultiFileHandler) makeDataFp() (*os.File, error) {
-	if err := fh.assetConfirmedWritableFiles(); err != nil {
-		return nil, err
-	}
-
-	if err := fileutil.MkdirIfNotExist(fh.dir); err != nil {
-		return nil, err
-	}
-
-	fileName := buildDataFileName(fh.topicName, fh.dir, dataFileSuffixName, fh.segFileGroupMsgWriter.fileSeq)
-	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
-	if err != nil {
-		return nil, err
-	}
-
-	return fp, nil
-}
-
-// 构造索引文件句柄
-func (fh *topicMultiFileHandler) makeIndexFp() (*os.File, error) {
-	if err := fh.assetConfirmedWritableFiles(); err != nil {
-		return nil, err
-	}
-
-	if err := fileutil.MkdirIfNotExist(fh.dir); err != nil {
-		return nil, err
-	}
-
-	fileName := buildIndexFileName(fh.topicName, fh.dir, indexFileSuffixName, fh.segFileGroupMsgWriter.fileSeq)
-	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
-	if err != nil {
-		return nil, err
-	}
-
-	fileInfo, err := fp.Stat()
-	if err != nil {
-		return nil, err
-	}
-
-	if fileInfo.IsDir() {
-		return nil, errdef.FileIsNotRegularFileErr
-	}
-
-	return fp, nil
-}
-
-// 打开下个可写入消息文件序号
-func (fh *topicMultiFileHandler) openNextSeqMsgFiles() error {
-	firstMsgOffsetOfNewFileSeq := fh.segFileGroupMsgWriter.firstMsgOffset + uint64(fh.segFileGroupMsgWriter.writtenIndexNum)
-	newFileSeqCreatedAt := time.Now()
-	fh.segFileGroupMsgWriter.fileSeq = buildFileSeq(newFileSeqCreatedAt, firstMsgOffsetOfNewFileSeq)
-	fh.segFileGroupMsgWriter.firstMsgOffset = firstMsgOffsetOfNewFileSeq
-	fh.segFileGroupMsgWriter.fileSeqCreatedAt = uint32(newFileSeqCreatedAt.Unix())
-
-	indexFp, err := fh.makeIndexFp()
-	if err != nil {
-		return err
-	}
-	indexFileInfo, err := indexFp.Stat()
-	if err != nil {
-		return err
-	}
-	writtenIndexBytes := indexFileInfo.Size()
-	if writtenIndexBytes % indexBufSize > 0 {
-		fh.hasFileCorruption = true
-		return errdef.FileCorruptionErr
-	}
-
-	dataFp, err := fh.makeDataFp()
-	if err != nil {
-		return err
-	}
-	dataFileInfo, err := dataFp.Stat()
-	if err != nil {
-		return err
-	}
-
-	fh.segFileGroupMsgWriter.indexFileWriter.fp = indexFp
-	fh.segFileGroupMsgWriter.indexFileWriter.writtenIndexNum = uint32(writtenIndexBytes / indexBufSize)
-	fh.segFileGroupMsgWriter.dataFileWriter.fp = dataFp
-	fh.segFileGroupMsgWriter.dataFileWriter.writtenDataBytes = uint32(dataFileInfo.Size())
-
-	if fh.segFileGroupMsgWriter.nextSeqFilesOpenEventCh != nil {
-		fh.segFileGroupMsgWriter.nextSeqFilesOpenEventCh <- &nextSeqFilesOpenEvent{
-			fileSeq: fh.segFileGroupMsgWriter.fileSeq,
-		}
-	}
-
-	return nil
+	return fh.segFileGroupMsgWriter.checkForCorruptFiles()
 }
 
 // 检查初始化前结构体不可为空字段
 func (fh *topicMultiFileHandler) assetRequiredFieldsBeforeInit() error {
-	if fh.topicName == "" || fh.syncToDiskInterval <= 0 ||
-		fh.segFileGroupMsgWriter.indexFileWriter == nil || fh.segFileGroupMsgWriter.dataFileWriter == nil ||
-		fh.segFileGroupMsgWriter.indexFileWriter.maxWritableIndexNum == 0 || fh.segFileGroupMsgWriter.maxWritableDataBytes == 0 ||
-		fh.dir == "" {
+	if fh.topicName == "" || fh.syncToDiskInterval <= 0 || fh.dir == "" || fh.segFileGroupMsgWriter == nil || !fh.segFileGroupMsgWriter.finishInit {
 		return errdef.MadeStructNotByNewFuncErr
 	}
 
 	return nil
-}
-
-// 检查结构体是否确认了可写入文件序号
-func (fh *topicMultiFileHandler) assetConfirmedWritableFiles() error {
-	if fh.segFileGroupMsgWriter.fileSeq != "" || fh.segFileGroupMsgWriter.fileSeqCreatedAt > 0 {
-		return nil
-	}
-
-	return errdef.NewErr(errdef.ErrCodeAssetStructFailed, "must call *topicMsgWriter.ConfirmWritableFiles(context.Context) to confirm writable files.")
 }
 
 type WriteMsgReq struct {
@@ -357,19 +414,23 @@ func newTopicMsgWriter(
 		syncToDiskInterval = defaultSyncToDiskInterval
 	}
 
+	multiFileHandler, err := newTopicMultiFileHandler(
+		topicName,
+		strings.TrimRight(baseDir, "/")+"/"+topicName,
+		maxWritableMsgNum,
+		maxWritableMsgDataBytes,
+		syncToDiskInterval,
+	)
+	if err != nil {
+		return nil, err
+	}
+
 	writer := &topicMsgWriter{
 		topicName: topicName,
 		logger:    logger,
-		multiFileHandler: newTopicMultiFileHandler(
-			topicName,
-			strings.TrimRight(baseDir, "/")+"/"+topicName,
-			maxWritableMsgNum,
-			maxWritableMsgDataBytes,
-			syncToDiskInterval,
-		),
+		multiFileHandler: multiFileHandler,
 	}
-
-	if err := writer.init(); err != nil {
+	if err = writer.init(); err != nil {
 		return nil, err
 	}
 
@@ -386,10 +447,6 @@ func (w *topicMsgWriter) init() error {
 		return err
 	}
 
-	if err := w.multiFileHandler.init(); err != nil {
-		return err
-	}
-
 	w.writeMsgReqChan = make(chan *WriteMsgReq, 10000)
 	w.stopLoopEventCh = make(chan struct{}, 10000)
 	w.finishInit = true
@@ -399,7 +456,7 @@ func (w *topicMsgWriter) init() error {
 
 // 检查初始化前不可为空字段
 func (w *topicMsgWriter) assetRequiredFieldsBeforeInit() error {
-	if w.topicName == "" || w.logger == nil || w.multiFileHandler == nil {
+	if w.topicName == "" || w.logger == nil || w.multiFileHandler == nil || !w.multiFileHandler.finishInit {
 		return errdef.MadeStructNotByNewFuncErr
 	}
 	return nil
@@ -510,7 +567,7 @@ func (w *topicMsgWriter) writeMsgs(msgItems []*fileMsgWrapper) error {
 			continue
 		}
 
-		if err := w.multiFileHandler.openNextSeqMsgFiles(); err != nil {
+		if err := w.multiFileHandler.segFileGroupMsgWriter.openNextSeqMsgFiles(); err != nil {
 			return err
 		}
 	}
