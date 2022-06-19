@@ -42,7 +42,7 @@ func TestWriteTopicMsg(t *testing.T) {
 
 	var (
 		writtenResultChs []chan *WrittenMsgEvent
-		msgs             []*msgstorages.Message
+		msges             []*msgstorages.Message
 	)
 	for i := 0; i < 5; i++ {
 		writtenMsgEventCh := make(chan *WrittenMsgEvent, 1)
@@ -56,7 +56,7 @@ func TestWriteTopicMsg(t *testing.T) {
 			writtenEventChan: writtenMsgEventCh,
 		}
 		writtenResultChs = append(writtenResultChs, writtenMsgEventCh)
-		msgs = append(msgs, msg)
+		msges = append(msges, msg)
 	}
 
 	for n, ch := range writtenResultChs {
@@ -65,7 +65,7 @@ func TestWriteTopicMsg(t *testing.T) {
 		t.Logf("%+v", res)
 	}
 
-	for _, msg := range msgs {
+	for _, msg := range msges {
 		t.Logf("msg.MsgOffset:%d", msg.GetMetadata().GetMsgOffset())
 	}
 }

@@ -29,7 +29,7 @@ type msgBufEncoder struct {
 	doneMetadataBuf []byte
 }
 
-func (e *msgBufEncoder) getMsgsDataBufBytes(msgItems []*fileMsgWrapper) uint32 {
+func (e *msgBufEncoder) getMsgesDataBufBytes(msgItems []*fileMsgWrapper) uint32 {
 	var totalBytes uint32
 	for _, msgItem := range msgItems {
 		totalBytes += uint32(len(msgItem.msg.GetDataPayload().GetData())) + bufBoundarySize
@@ -37,9 +37,9 @@ func (e *msgBufEncoder) getMsgsDataBufBytes(msgItems []*fileMsgWrapper) uint32 {
 	return totalBytes
 }
 
-func (e *msgBufEncoder) encodeMsgs(msgItems []*fileMsgWrapper) (indexesBuf []byte, dataBuf []byte) {
+func (e *msgBufEncoder) encodeMsges(msgItems []*fileMsgWrapper) (indexesBuf []byte, dataBuf []byte) {
 	indexesBufBytes := len(msgItems) * indexBufSize
-	dataBufSizeBytes := e.getMsgsDataBufBytes(msgItems)
+	dataBufSizeBytes := e.getMsgesDataBufBytes(msgItems)
 	if indexesBufBytes > len(e.indexesBuf) {
 		e.indexesBuf = make([]byte, indexesBufBytes)
 	}
@@ -76,7 +76,7 @@ func (e *msgBufEncoder) encodeMsgs(msgItems []*fileMsgWrapper) (indexesBuf []byt
 		writableDataBuf[0] = bufBeginBoundary
 		copy(writableDataBuf[1:], dataPayload.GetData())
 		writableDataBuf[dataLen + 1] = bufEndBoundary
-		writtenDataBufLen += e.getMsgsDataBufBytes([]*fileMsgWrapper{msgItem})
+		writtenDataBufLen += e.getMsgesDataBufBytes([]*fileMsgWrapper{msgItem})
 	}
 
 	indexesBuf = e.indexesBuf[:indexesBufBytes]

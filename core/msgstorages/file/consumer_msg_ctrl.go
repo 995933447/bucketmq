@@ -233,7 +233,7 @@ func (l *consumerSegFileGroupMsgLoader) load() ([]*fileMsgWrapper, error) {
 		return nil, err
 	}
 
-	msgItems, err := l.loadMsgs(l.msgOffsetToAttemptMap, l.doneMsgOffsetSet)
+	msgItems, err := l.loadMsges(l.msgOffsetToAttemptMap, l.doneMsgOffsetSet)
 	if err != nil {
 		return nil, err
 	}
@@ -319,7 +319,7 @@ func (l *consumerSegFileGroupMsgLoader) loadMsgAttempts() error {
 	return nil
 }
 
-func (l *consumerSegFileGroupMsgLoader) loadMsgs(msgOffsetToAttemptMap map[uint64]*attemptFileMsgMetadataWrapper, doneMsgOffsetSet *structs.Uint64Set) ([]*fileMsgWrapper, error) {
+func (l *consumerSegFileGroupMsgLoader) loadMsges(msgOffsetToAttemptMap map[uint64]*attemptFileMsgMetadataWrapper, doneMsgOffsetSet *structs.Uint64Set) ([]*fileMsgWrapper, error) {
 	var (
 		msgBuf = make([]byte, 1024 * 1024 * indexBufSize)
 		allLoaded []*fileMsgWrapper
@@ -352,7 +352,7 @@ func (l *consumerSegFileGroupMsgLoader) loadMsgs(msgOffsetToAttemptMap map[uint6
 		}
 
 		for _, msgItem := range msgItems {
-			dataBuf := make([]byte, l.msgBufEncoder.getMsgsDataBufBytes([]*fileMsgWrapper{msgItem}))
+			dataBuf := make([]byte, l.msgBufEncoder.getMsgesDataBufBytes([]*fileMsgWrapper{msgItem}))
 			n, err = l.dataFileReader.fp.ReadAt(dataBuf, int64(msgItem.dataOffset))
 			if err != nil {
 				return nil, err
@@ -414,7 +414,7 @@ func (l *consumerSegFileGroupMsgLoader) close(ctx context.Context) error {
 	return nil
 }
 
-func (l *consumerSegFileGroupMsgLoader) areAllMsgsDone() bool {
+func (l *consumerSegFileGroupMsgLoader) areAllMsgesDone() bool {
 	return l.doneMsgOffsetSet.Len() >= l.indexNum
 }
 

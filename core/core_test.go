@@ -3,14 +3,9 @@ package core
 import (
 	"encoding/binary"
 	"fmt"
-	"github.com/995933447/bucketmq/core/msgstorage"
 	"github.com/go-basic/uuid"
 	"testing"
 )
-
-func TestPrintMsg(t *testing.T) {
-	fmt.Printf("%+v", &msgstorages.Message{})
-}
 
 func TestSetBuf(t *testing.T) {
 	b := make([]byte, 1000)

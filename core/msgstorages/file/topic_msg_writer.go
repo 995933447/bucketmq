@@ -490,7 +490,7 @@ func (w *topicMsgWriter) setLogger(logger log.Logger) error {
 }
 
 // 批量写入消息
-func (w *topicMsgWriter) writeMsgs(msgItems []*fileMsgWrapper) error {
+func (w *topicMsgWriter) writeMsges(msgItems []*fileMsgWrapper) error {
 	if w.multiFileHandler.hasFileCorruption {
 		err := errdef.FileCorruptionErr
 		return err
@@ -498,28 +498,28 @@ func (w *topicMsgWriter) writeMsgs(msgItems []*fileMsgWrapper) error {
 
 	for len(msgItems) > 0 {
 		var (
-			batchWritableMsgs            []*fileMsgWrapper
+			batchWritableMsgeItems            []*fileMsgWrapper
 			batchWritableMsgDataBufBytes uint32
 			areMsgFilesFull              bool
 		)
 
 		for _, msgItem := range msgItems {
-			msgBytes := w.multiFileHandler.msgBufEncoder.getMsgsDataBufBytes([]*fileMsgWrapper{msgItem})
+			msgBytes := w.multiFileHandler.msgBufEncoder.getMsgesDataBufBytes([]*fileMsgWrapper{msgItem})
 			batchWritableMsgDataBufBytes += msgBytes
-			if w.multiFileHandler.segFileGroupMsgWriter.writtenIndexNum + uint32(len(batchWritableMsgs)) >= w.multiFileHandler.segFileGroupMsgWriter.maxWritableIndexNum ||
+			if w.multiFileHandler.segFileGroupMsgWriter.writtenIndexNum + uint32(len(batchWritableMsgeItems)) >= w.multiFileHandler.segFileGroupMsgWriter.maxWritableIndexNum ||
 				w.multiFileHandler.segFileGroupMsgWriter.writtenDataBytes + batchWritableMsgDataBufBytes >= w.multiFileHandler.segFileGroupMsgWriter.maxWritableDataBytes {
 				areMsgFilesFull = true
 				batchWritableMsgDataBufBytes -= msgBytes
 				break
 			}
 
-			batchWritableMsgs = append(batchWritableMsgs, msgItem)
+			batchWritableMsgeItems = append(batchWritableMsgeItems, msgItem)
 		}
 
-		batchWritableMsgNum := len(batchWritableMsgs)
+		batchWritableMsgNum := len(batchWritableMsgeItems)
 
 		if batchWritableMsgNum > 0 {
-			indexesBuf, dataBuf := w.multiFileHandler.msgBufEncoder.encodeMsgs(batchWritableMsgs)
+			indexesBuf, dataBuf := w.multiFileHandler.msgBufEncoder.encodeMsges(batchWritableMsgeItems)
 
 			var (
 				indexesBufLen   = len(indexesBuf)
@@ -580,7 +580,7 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 	syncToDiskTick := time.NewTicker(w.multiFileHandler.syncToDiskInterval)
 	defer syncToDiskTick.Stop()
 
-	writeMsgsAsPossible := func(firstWriteReq *WriteMsgReq) error {
+	writeMsgesAsPossible := func(firstWriteReq *WriteMsgReq) error {
 		type writtenMsgEventChWrapper struct {
 			ch        chan *WrittenMsgEvent
 			msgOffset uint64
@@ -622,7 +622,7 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 				})
 			}
 			allocNextMsgOffset++
-			allocNextMsgDataOffset += w.multiFileHandler.msgBufEncoder.getMsgsDataBufBytes([]*fileMsgWrapper{msgItem})
+			allocNextMsgDataOffset += w.multiFileHandler.msgBufEncoder.getMsgesDataBufBytes([]*fileMsgWrapper{msgItem})
 		}
 
 		if firstWriteReq != nil {
@@ -651,7 +651,7 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 			return nil
 		}
 
-		notifyWrittenMsgsResult := func(err error) {
+		notifyWrittenMsgesResult := func(err error) {
 			for _, wrapper := range writtenMsgEventChWrappers {
 				var notifyResultEvent *WrittenMsgEvent
 				if err != nil {
@@ -667,13 +667,13 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 			}
 		}
 
-		err := w.writeMsgs(msgItems)
+		err := w.writeMsges(msgItems)
 		if err != nil {
-			go notifyWrittenMsgsResult(err)
+			go notifyWrittenMsgesResult(err)
 			return err
 		}
 
-		go notifyWrittenMsgsResult(nil)
+		go notifyWrittenMsgesResult(nil)
 
 		return nil
 	}
@@ -681,7 +681,7 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 	for {
 		select {
 		case writeMsgReq := <- w.writeMsgReqChan:
-			err := writeMsgsAsPossible(writeMsgReq)
+			err := writeMsgesAsPossible(writeMsgReq)
 			if err != nil {
 				return err
 			}
@@ -690,9 +690,13 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 				return err
 			} else if hasFileCorruption {
 				return errdef.FileCorruptionErr
-			} else if err = w.multiFileHandler.syncToDisk(); err != nil {
-				w.logger.Warn(ctx, err)
 			}
+
+			go func() {
+				if err := w.multiFileHandler.syncToDisk(); err != nil {
+					w.logger.Warn(ctx, err)
+				}
+			}()
 		case <- w.stopLoopEventCh:
 			w.readyToStopLoop()
 			return nil
