@@ -18,3 +18,7 @@ func (s *Uint64Set) Exist(offset uint64) bool {
 	_, ok := s.uint64KeyMap[offset]
 	return ok
 }
+
+func (s *Uint64Set) Len() uint32 {
+	return uint32(len(s.uint64KeyMap))
+}

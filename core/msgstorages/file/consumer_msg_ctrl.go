@@ -28,6 +28,8 @@ type consumerSegFileGroupMsgLoader struct {
 	firstMsgOffset uint64
 	// 完成消费的位移
 	doneMsgOffsetSet *structs.Uint64Set
+	// 各消息尝试次数
+	msgOffsetToAttemptMap map[uint64]*attemptFileMsgMetadataWrapper
 	// 消息编码器
 	*msgBufEncoder
 	// 是否已经关闭
@@ -92,7 +94,6 @@ func (l *consumerSegFileGroupMsgLoader) init() error {
 	if err != nil {
 		return err
 	}
-
 	doneMetadataBytes := indexFileInfo.Size()
 	if doneMetadataBytes % doneMetadataBufSize > 0 {
 		l.multiFileHandler.hasFileCorruption = true
@@ -115,10 +116,12 @@ func (l *consumerSegFileGroupMsgLoader) init() error {
 
 	l.indexFileReader.fp = indexFp
 	l.dataFileReader.fp = dataFp
-	l.indexFileReader.indexNum = uint32(writtenIndexBytes / indexBufSize)
-	l.dataFileReader.fp = doneFp
+	l.doneFileRWriter.fp = doneFp
 	l.attemptFileRWriter.fp = attemptFp
-
+	l.indexFileReader.indexNum = uint32(writtenIndexBytes / indexBufSize)
+	l.msgOffsetToAttemptMap = make(map[uint64]*attemptFileMsgMetadataWrapper)
+	l.doneMsgOffsetSet = &structs.Uint64Set{}
+	
 	return nil
 }
 
@@ -142,7 +145,7 @@ func (l *consumerSegFileGroupMsgLoader) newAttemptFp() (*os.File, error) {
 		l.multiFileHandler.dir, attemptFileSuffixName,
 		l.fileSeq,
 		)
-	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
+	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
 		return nil, err
 	}
@@ -177,7 +180,7 @@ func (l *consumerSegFileGroupMsgLoader) newDataFp() (*os.File, error) {
 	}
 
 	fileName := buildDataFileName(l.multiFileHandler.topicName, l.multiFileHandler.dir, dataFileSuffixName, l.fileSeq)
-	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
+	fp, err := os.OpenFile(fileName, os.O_RDONLY|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
 		return nil, err
 	}
@@ -193,7 +196,7 @@ func (l *consumerSegFileGroupMsgLoader) newIndexFp() (*os.File, error) {
 
 	fileName := buildIndexFileName(l.multiFileHandler.topicName, l.multiFileHandler.dir, indexFileSuffixName, l.fileSeq)
 
-	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
+	fp, err := os.OpenFile(fileName, os.O_RDONLY|os.O_CREATE, os.FileMode(0755))
 	if err != nil {
 		return nil, err
 	}
@@ -226,12 +229,11 @@ func (l *consumerSegFileGroupMsgLoader) load() ([]*fileMsgWrapper, error) {
 		return nil, err
 	}
 
-	msgOffsetToAttemptCntMap, err := l.loadMsgAttemptCnt()
-	if err != nil {
+	if err := l.loadMsgAttempts(); err != nil {
 		return nil, err
 	}
 
-	msgItems, err := l.loadMsgs(msgOffsetToAttemptCntMap, l.doneMsgOffsetSet)
+	msgItems, err := l.loadMsgs(l.msgOffsetToAttemptMap, l.doneMsgOffsetSet)
 	if err != nil {
 		return nil, err
 	}
@@ -277,12 +279,12 @@ func (l *consumerSegFileGroupMsgLoader) loadDoneMsgOffsets() error {
 	return nil
 }
 
-func (l *consumerSegFileGroupMsgLoader) loadMsgAttemptCnt() (msgOffsetToAttemptCntMap map[uint64]uint32, err error) {
+func (l *consumerSegFileGroupMsgLoader) loadMsgAttempts() error {
 	buf := make([]byte, 10240 * doneMetadataBufSize, 10240 * doneMetadataBufSize)
 
-	_, err = l.attemptFileRWriter.fp.Seek(0, io.SeekStart)
+	_, err := l.attemptFileRWriter.fp.Seek(0, io.SeekStart)
 	if err != nil {
-		return
+		return err
 	}
 
 	for {
@@ -292,12 +294,12 @@ func (l *consumerSegFileGroupMsgLoader) loadMsgAttemptCnt() (msgOffsetToAttemptC
 			if err == io.EOF {
 				break
 			}
-			return
+			return err
 		}
 
 		if n % doneMetadataBufSize != 0 {
 			err = errdef.FileCorruptionErr
-			return
+			return err
 		}
 
 		if n == 0 {
@@ -307,17 +309,17 @@ func (l *consumerSegFileGroupMsgLoader) loadMsgAttemptCnt() (msgOffsetToAttemptC
 		var attemptMetadataList []*attemptFileMsgMetadataWrapper
 		attemptMetadataList, err = l.msgBufEncoder.decodeAttemptMetadata(buf[:n])
 		if err != nil {
-			return
+			return err
 		}
 		for _, attemptMetadata := range attemptMetadataList {
-			msgOffsetToAttemptCntMap[attemptMetadata.msgOffset] = attemptMetadata.attemptCnt
+			l.msgOffsetToAttemptMap[attemptMetadata.msgOffset] = attemptMetadata
 		}
 	}
 
-	return msgOffsetToAttemptCntMap, nil
+	return nil
 }
 
-func (l *consumerSegFileGroupMsgLoader) loadMsgs(msgOffsetToAttemptCntMap map[uint64]uint32, doneMsgOffsetSet *structs.Uint64Set) ([]*fileMsgWrapper, error) {
+func (l *consumerSegFileGroupMsgLoader) loadMsgs(msgOffsetToAttemptMap map[uint64]*attemptFileMsgMetadataWrapper, doneMsgOffsetSet *structs.Uint64Set) ([]*fileMsgWrapper, error) {
 	var (
 		msgBuf = make([]byte, 1024 * 1024 * indexBufSize)
 		allLoaded []*fileMsgWrapper
@@ -364,11 +366,12 @@ func (l *consumerSegFileGroupMsgLoader) loadMsgs(msgOffsetToAttemptCntMap map[ui
 
 			var (
 				msgMetadata = msgItem.msg.GetMetadata()
-				msgRetryCnt uint32
+				msgRetryCnt, msgNextRetryAt uint32
 			)
 
-			if msgAttemptCnt := msgOffsetToAttemptCntMap[msgMetadata.GetMsgOffset()]; msgAttemptCnt > 0 {
-				msgRetryCnt = msgAttemptCnt - 1
+			if msgAttemptMetadata := msgOffsetToAttemptMap[msgMetadata.GetMsgOffset()]; msgAttemptMetadata.attemptCnt > 0 {
+				msgRetryCnt = msgAttemptMetadata.attemptCnt - 1
+				msgNextRetryAt = msgAttemptMetadata.nextAttemptedAt
 			}
 
 			newMsgReq := &msgstorages.NewMsgReq{
@@ -380,7 +383,7 @@ func (l *consumerSegFileGroupMsgLoader) loadMsgs(msgOffsetToAttemptCntMap map[ui
 				ExpireAt: msgMetadata.GetExpireAt(),
 				MsgOffset: msgMetadata.GetMsgOffset(),
 				RetryCnt: msgRetryCnt,
-				ExpectRetryAt: msgMetadata.GetExpectRetryAt(),
+				ExpectRetryAt: msgNextRetryAt,
 				Data: msgData,
 			}
 			msgItem.msg = msgstorages.NewMsg(newMsgReq)
@@ -397,14 +400,22 @@ func (l *consumerSegFileGroupMsgLoader) close(ctx context.Context) error {
 	if err := l.indexFileReader.fp.Close(); err != nil {
 		l.logger.Warn(ctx, err)
 	}
+
 	if err := l.dataFileReader.fp.Close(); err != nil {
 		l.logger.Warn(ctx, err)
 	}
+
 	if err := l.doneFileRWriter.fp.Close(); err != nil {
 		l.logger.Warn(ctx, err)
 	}
+
 	l.isClosed = true
+
 	return nil
+}
+
+func (l *consumerSegFileGroupMsgLoader) isAllDone() bool {
+	return l.doneMsgOffsetSet.Len() >= l.indexNum
 }
 
 type consumerMultiFileHandler struct {

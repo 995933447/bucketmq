@@ -21,4 +21,5 @@ type attemptFileMsgMetadataWrapper struct {
 	attemptCnt uint32
 	lastAttemptedAt uint32
 	nextAttemptedAt uint32
+	fileOffset uint32
 }
