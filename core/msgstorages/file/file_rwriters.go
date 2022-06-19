@@ -42,7 +42,6 @@ type dataFileReader struct {
 
 type doneFileRWriter struct {
 	fp *os.File
-	doneNum uint32
 }
 
 type attemptFileRWriter struct {
