@@ -35,7 +35,7 @@ type consumerSegFileGroupMsgLoader struct {
 	// 日志
 	logger log.Logger
 	// 关联的多文件处理器
-	multiFileHandler *topicMultiFileHandler
+	multiFileHandler *consumerMultiFileHandler
 	// 是否已经初始化
 	finishInit bool
 }
@@ -69,6 +69,56 @@ func (l *consumerSegFileGroupMsgLoader) init() error {
 		return err
 	}
 
+	indexFp, err := l.newIndexFp()
+	if err != nil {
+		return err
+	}
+	indexFileInfo, err := indexFp.Stat()
+	if err != nil {
+		return err
+	}
+	writtenIndexBytes := indexFileInfo.Size()
+	if writtenIndexBytes % indexBufSize > 0 {
+		l.multiFileHandler.hasFileCorruption = true
+		return errdef.FileCorruptionErr
+	}
+
+	dataFp, err := l.newDataFp()
+	if err != nil {
+		return err
+	}
+
+	doneFp, err := l.newDoneFp()
+	if err != nil {
+		return err
+	}
+
+	doneMetadataBytes := indexFileInfo.Size()
+	if doneMetadataBytes % doneMetadataBufSize > 0 {
+		l.multiFileHandler.hasFileCorruption = true
+		return errdef.FileCorruptionErr
+	}
+
+	attemptFp, err := l.newAttemptFp()
+	if err != nil {
+		return err
+	}
+	attemptFileInfo, err := attemptFp.Stat()
+	if err != nil {
+		return err
+	}
+	attemptMetadataBytes := attemptFileInfo.Size()
+	if attemptMetadataBytes % attemptCntMetadataBufSize > 0 {
+		l.multiFileHandler.hasFileCorruption = true
+		return errdef.FileCorruptionErr
+	}
+
+	l.indexFileReader.fp = indexFp
+	l.dataFileReader.fp = dataFp
+	l.indexFileReader.indexNum = uint32(writtenIndexBytes / indexBufSize)
+	l.dataFileReader.fp = doneFp
+	l.attemptFileRWriter.fp = attemptFp
+
 	return nil
 }
 
@@ -78,6 +128,46 @@ func (l *consumerSegFileGroupMsgLoader) assetRequiredFieldsBeforeInit() error {
 	}
 
 	return nil
+}
+
+// 构造数据文件句柄
+func (l *consumerSegFileGroupMsgLoader) newAttemptFp() (*os.File, error) {
+	if err := fileutil.MkdirIfNotExist(l.multiFileHandler.dir); err != nil {
+		return nil, err
+	}
+
+	fileName := buildAttemptFileName(
+		l.multiFileHandler.topicName,
+		l.multiFileHandler.consumerGroupName,
+		l.multiFileHandler.dir, attemptFileSuffixName,
+		l.fileSeq,
+		)
+	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
+	if err != nil {
+		return nil, err
+	}
+
+	return fp, nil
+}
+
+// 构造数据文件句柄
+func (l *consumerSegFileGroupMsgLoader) newDoneFp() (*os.File, error) {
+	if err := fileutil.MkdirIfNotExist(l.multiFileHandler.dir); err != nil {
+		return nil, err
+	}
+
+	fileName := buildDoneFileName(
+		l.multiFileHandler.topicName,
+		l.multiFileHandler.consumerGroupName,
+		l.multiFileHandler.dir, doneFileSuffixName,
+		l.fileSeq,
+		)
+	fp, err := os.OpenFile(fileName, os.O_WRONLY|os.O_APPEND|os.O_CREATE, os.FileMode(0755))
+	if err != nil {
+		return nil, err
+	}
+
+	return fp, nil
 }
 
 // 构造数据文件句柄
@@ -318,6 +408,10 @@ func (l *consumerSegFileGroupMsgLoader) close(ctx context.Context) error {
 }
 
 type consumerMultiFileHandler struct {
+	// 主体名称
+	topicName string
+	// 消费组名称
+	consumerGroupName string
 	// 每个文件序号的消息载入器
 	consumerMsgLoaders []*consumerSegFileGroupMsgLoader
 	// 消费组历史首次消费的开始位移检查文件读写器
@@ -328,6 +422,8 @@ type consumerMultiFileHandler struct {
 	dir string
 	// 消息编码器
 	*msgBufEncoder
+	// 文件污染
+	hasFileCorruption bool
 	// 是否初始化完成
 	finishInit bool
 }

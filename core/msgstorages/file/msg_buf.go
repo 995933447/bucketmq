@@ -20,7 +20,7 @@ const (
 	// MsgOffset(8 bytes) + DoneAt(4 bytes) + bufBoundarySize(2 bytes)
 	doneMetadataBufSize = 14
 	// MsgOffset(8 bytes)
-	attemptCntMetaBufSize = 13
+	attemptCntMetadataBufSize = 13
 )
 
 type msgBufEncoder struct {

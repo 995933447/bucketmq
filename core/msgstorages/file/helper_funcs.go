@@ -27,17 +27,28 @@ func trimPreSuffixToParseFileSeq(fileName, prefixName, suffixName string) (strin
 	return seq, nil
 }
 
-func buildMsgFileName(dir, prefixName, suffixName string, fileSeq string) string {
-	fileName := strings.TrimRight(dir, "/") + "/" + prefixName + filePrefixNameSep + fileSeq + "." + suffixName
-	return fileName
+func buildSegMsgFileName(dir, prefixName, suffixName string, fileSeq string) string {
+	return strings.TrimRight(dir, "/") + "/" + prefixName + filePrefixNameSep + fileSeq + "." + suffixName
 }
 
-func buildIndexFileName(topicName, dir, suffixName string, fileSeq string) string {
-	return buildMsgFileName(dir, topicName, suffixName, fileSeq)
+func buildIndexFileName(topicName, dir, suffixName, fileSeq string) string {
+	return buildSegMsgFileName(dir, topicName, suffixName, fileSeq)
 }
 
-func buildDataFileName(topicName, dir, suffixName string, fileSeq string) string {
-	return buildMsgFileName(dir, topicName, suffixName, fileSeq)
+func buildDataFileName(topicName, dir, suffixName, fileSeq string) string {
+	return buildSegMsgFileName(dir, topicName, suffixName, fileSeq)
+}
+
+func buildDoneFileName(topicName, consumerGroupName, dir, suffixName, fileSeq string) string {
+	return buildSegMsgFileName(dir, topicName + filePrefixNameSep + consumerGroupName, suffixName, fileSeq)
+}
+
+func buildAttemptFileName(topicName, consumerGroupName, dir, suffixName, fileSeq string) string {
+	return buildSegMsgFileName(dir, topicName + filePrefixNameSep + consumerGroupName, suffixName, fileSeq)
+}
+
+func buildMsgCheckFileName(dir, prefixName, suffixName string) string {
+	return strings.TrimRight(dir, "/") + "/" + prefixName + "." + suffixName
 }
 
 func calMaxFileSeqFromDir(dir, prefixName, suffixName string) (string, error) {
