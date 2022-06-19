@@ -352,7 +352,7 @@ func (l *consumerSegFileGroupMsgLoader) loadMsges(msgOffsetToAttemptMap map[uint
 		}
 
 		for _, msgItem := range msgItems {
-			dataBuf := make([]byte, l.msgBufEncoder.getMsgesDataBufBytes([]*fileMsgWrapper{msgItem}))
+			dataBuf := make([]byte, l.msgBufEncoder.calcMsgDataBufBytes([]*fileMsgWrapper{msgItem}))
 			n, err = l.dataFileReader.fp.ReadAt(dataBuf, int64(msgItem.dataOffset))
 			if err != nil {
 				return nil, err

@@ -293,7 +293,7 @@ func (gw *topicSegFileGroupMsgWriter) assetConfirmedWritableFiles() error {
 		return nil
 	}
 
-	return errdef.NewErr(errdef.ErrCodeAssetStructFailed, "must call *consumerSegFileGroupMsgLoader.ConfirmWritableFiles(context.Context) to confirm writable files.")
+	return errdef.NewErr(errdef.ErrCodeAssetStructFailed, "must call *topicSegFileGroupMsgWriter.sureWritableFiles(context.Context) to confirm writable files.")
 }
 
 // topic消息文件处理器
@@ -498,28 +498,28 @@ func (w *topicMsgWriter) writeMsges(msgItems []*fileMsgWrapper) error {
 
 	for len(msgItems) > 0 {
 		var (
-			batchWritableMsgeItems            []*fileMsgWrapper
+			batchWritableMsgItems            []*fileMsgWrapper
 			batchWritableMsgDataBufBytes uint32
 			areMsgFilesFull              bool
 		)
 
 		for _, msgItem := range msgItems {
-			msgBytes := w.multiFileHandler.msgBufEncoder.getMsgesDataBufBytes([]*fileMsgWrapper{msgItem})
+			msgBytes := w.multiFileHandler.msgBufEncoder.calcMsgDataBufBytes([]*fileMsgWrapper{msgItem})
 			batchWritableMsgDataBufBytes += msgBytes
-			if w.multiFileHandler.segFileGroupMsgWriter.writtenIndexNum + uint32(len(batchWritableMsgeItems)) >= w.multiFileHandler.segFileGroupMsgWriter.maxWritableIndexNum ||
+			if w.multiFileHandler.segFileGroupMsgWriter.writtenIndexNum + uint32(len(batchWritableMsgItems)) >= w.multiFileHandler.segFileGroupMsgWriter.maxWritableIndexNum ||
 				w.multiFileHandler.segFileGroupMsgWriter.writtenDataBytes + batchWritableMsgDataBufBytes >= w.multiFileHandler.segFileGroupMsgWriter.maxWritableDataBytes {
 				areMsgFilesFull = true
 				batchWritableMsgDataBufBytes -= msgBytes
 				break
 			}
 
-			batchWritableMsgeItems = append(batchWritableMsgeItems, msgItem)
+			batchWritableMsgItems = append(batchWritableMsgItems, msgItem)
 		}
 
-		batchWritableMsgNum := len(batchWritableMsgeItems)
+		batchWritableMsgNum := len(batchWritableMsgItems)
 
 		if batchWritableMsgNum > 0 {
-			indexesBuf, dataBuf := w.multiFileHandler.msgBufEncoder.encodeMsges(batchWritableMsgeItems)
+			indexesBuf, dataBuf := w.multiFileHandler.msgBufEncoder.encodeMsges(batchWritableMsgItems)
 
 			var (
 				indexesBufLen   = len(indexesBuf)
@@ -622,7 +622,7 @@ func (w *topicMsgWriter) loop(ctx context.Context) error {
 				})
 			}
 			allocNextMsgOffset++
-			allocNextMsgDataOffset += w.multiFileHandler.msgBufEncoder.getMsgesDataBufBytes([]*fileMsgWrapper{msgItem})
+			allocNextMsgDataOffset += w.multiFileHandler.msgBufEncoder.calcMsgDataBufBytes([]*fileMsgWrapper{msgItem})
 		}
 
 		if firstWriteReq != nil {
