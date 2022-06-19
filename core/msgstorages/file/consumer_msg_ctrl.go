@@ -414,7 +414,7 @@ func (l *consumerSegFileGroupMsgLoader) close(ctx context.Context) error {
 	return nil
 }
 
-func (l *consumerSegFileGroupMsgLoader) areAllMsgesDone() bool {
+func (l *consumerSegFileGroupMsgLoader) isAllDone() bool {
 	return l.doneMsgOffsetSet.Len() >= l.indexNum
 }
 
