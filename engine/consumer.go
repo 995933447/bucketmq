@@ -20,6 +20,16 @@ func (c *consumer) run() {
 		case <-c.exitCh:
 			goto out
 		}
+
+		msg := <-consumeCh
+
+		// TODO
+
+		c.confirmMsgCh <- &confirmMsgReq{
+			seq:       msg.seq,
+			idxOffset: msg.offset,
+			bucketId:  msg.bucketId,
+		}
 	}
 out:
 	return
