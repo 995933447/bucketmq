@@ -43,6 +43,9 @@ func NewSubscriber(baseDir, topic, consumerName string, globalMaxConcurWorkerNum
 		bucketMaxConcurWorkerNum: bucketMaxConcurWorkerNum,
 		queue:                    newQueue(weight),
 		exitCh:                   make(chan struct{}),
+		readyConsumerCh:          make(chan chan *FileMsg),
+		watchWrittenCh:           make(chan uint64),
+		confirmMsgCh:             make(chan *confirmMsgReq),
 	}
 
 	var err error
