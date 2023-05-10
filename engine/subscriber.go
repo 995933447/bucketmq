@@ -67,9 +67,20 @@ type Subscriber struct {
 	readyConsumerCh chan chan *FileMsg
 	watchWrittenCh  chan uint64
 	confirmMsgCh    chan *confirmMsgReq
+	consumers       []*consumer
 }
 
-func (s *Subscriber) Loop() {
+func (s *Subscriber) Start() {
+	for i := uint32(0); i < s.globalMaxConcurWorkerNum; i++ {
+		consumer := newConsumer(s)
+		s.consumers = append(s.consumers, consumer)
+		consumer.run()
+	}
+
+	s.loop()
+}
+
+func (s *Subscriber) loop() {
 	migrateDelayMsgTk := time.NewTimer(time.Second)
 	var waitConsumeChs []chan *FileMsg
 	isBucketPendingNotFull := func(bucket *bucket) bool {
@@ -81,14 +92,17 @@ func (s *Subscriber) Loop() {
 		case <-migrateDelayMsgTk.C:
 			s.queue.migrateExpired()
 		case <-s.exitCh:
+			for _, consumer := range s.consumers {
+				consumer.exit()
+			}
 			s.readerGrp.close()
 		case confirmReq := <-s.confirmMsgCh:
 			s.bucketPendingNumRec.subPending(confirmReq.bucketId)
-			read, ok := s.readerGrp.seqToReaderMap[confirmReq.seq]
+			reader, ok := s.readerGrp.seqToReaderMap[confirmReq.seq]
 			if !ok {
 				break
 			}
-			read.confirmMsgCh <- &confirmedMsgIdx{
+			reader.confirmMsgCh <- &confirmedMsgIdx{
 				idxOffset: confirmReq.idxOffset,
 			}
 		case consumeCh := <-s.readyConsumerCh:
