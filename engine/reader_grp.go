@@ -7,25 +7,57 @@ import (
 	"strings"
 )
 
-func newReaderGroup(subscriber *Subscriber, maxOpenFileNum uint32) (*readerGrp, error) {
-	rg := &readerGrp{
-		Subscriber:     subscriber,
-		maxOpenFileNum: maxOpenFileNum,
-	}
+type LoadMsgMode int
 
-	if err := rg.load(); err != nil {
+const (
+	loadModeNil LoadMsgMode = iota
+	loadModeAll
+	loadModeSeekMsgId
+	loadModeNewest
+)
+
+func newReaderGrp(subscriber *Subscriber, loadMode LoadMsgMode, startMsgId uint64, maxOpenReaderNum uint32, bootId uint32) (*readerGrp, error) {
+	grp := &readerGrp{
+		Subscriber:       subscriber,
+		loadMode:         loadMode,
+		startMsgId:       startMsgId,
+		maxOpenReaderNum: maxOpenReaderNum,
+	}
+	var err error
+	grp.msgIdGen, err = newMsgIdGen(subscriber.baseDir, subscriber.topic)
+	if err != nil {
 		return nil, err
 	}
 
-	return rg, nil
+	grp.loadBoot, err = newLoadBoot(grp)
+	if err != nil {
+		return nil, err
+	}
+
+	if bootId != grp.loadBoot.bootId {
+		grp.isFirstBoot = true
+		grp.loadBoot.bootId = bootId
+	}
+
+	if err = grp.load(); err != nil {
+		return nil, err
+	}
+
+	return grp, nil
 }
 
 type readerGrp struct {
 	*Subscriber
-	maxOpenFileNum uint32
-	curSeq         uint64
-	maxSeq         uint64
-	seqToReaderMap map[uint64]*reader
+	*msgIdGen
+	*loadBoot
+	loadMode         LoadMsgMode
+	startMsgId       uint64
+	bootId           uint32
+	isFirstBoot      bool
+	curSeq           uint64
+	maxSeq           uint64
+	maxOpenReaderNum uint32
+	seqToReaderMap   map[uint64]*reader
 }
 
 func (rg *readerGrp) close() {
@@ -35,7 +67,7 @@ func (rg *readerGrp) close() {
 }
 
 func (rg *readerGrp) load() error {
-	dir := getTopicFileDir(rg.baseDir, rg.topic)
+	dir := getTopicFileDir(rg.Subscriber.baseDir, rg.Subscriber.topic)
 
 	if err := mkdirIfNotExist(dir); err != nil {
 		return err
@@ -46,7 +78,10 @@ func (rg *readerGrp) load() error {
 		return err
 	}
 
-	var orderedSeqs []uint64
+	var (
+		validSeqs []uint64
+		startSeq  uint64
+	)
 	for _, file := range files {
 		if !strings.Contains(file.Name(), idxFileSuffix) {
 			continue
@@ -66,24 +101,62 @@ func (rg *readerGrp) load() error {
 			return err
 		}
 
-		orderedSeqs = append(orderedSeqs, seq)
+		switch rg.loadMode {
+		case loadModeAll:
+			validSeqs = append(validSeqs, seq)
+		case loadModeSeekMsgId:
+			if seq > rg.startMsgId {
+				validSeqs = append(validSeqs, seq)
+				break
+			}
+			if startSeq == rg.startMsgId {
+				break
+			}
+			if seq == startSeq {
+				startSeq = seq
+				break
+			}
+			if startSeq < seq {
+				startSeq = seq
+			}
+		case loadModeNewest:
+			if !rg.isFirstBoot {
+				if seq >= rg.loadBoot.bootSeq {
+					validSeqs = append(validSeqs, seq)
+				}
+				break
+			}
+
+			if startSeq > seq {
+				break
+			}
+			startSeq = seq
+			break
+		}
 	}
 
-	sort.Slice(orderedSeqs, func(i, j int) bool {
-		return orderedSeqs[i] < orderedSeqs[j]
+	if startSeq != 0 {
+		validSeqs = append(validSeqs, startSeq)
+	}
+
+	if len(validSeqs) == 0 {
+		return nil
+	}
+
+	sort.Slice(validSeqs, func(i, j int) bool {
+		return validSeqs[i] < validSeqs[j]
 	})
 
-	rg.curSeq = orderedSeqs[0]
-	rg.maxSeq = orderedSeqs[len(orderedSeqs)-1]
+	rg.curSeq = validSeqs[0]
+	rg.maxSeq = validSeqs[len(validSeqs)-1]
 
-	lastSeqIdx := len(orderedSeqs)
-	for i, seq := range orderedSeqs {
-		reader, err := rg.loadReader(seq)
+	for _, seq := range validSeqs {
+		reader, err := rg.loadSpec(seq)
 		if err != nil {
 			return err
 		}
 
-		if i < lastSeqIdx {
+		if seq < rg.maxSeq {
 			ok, err := reader.isFinished()
 			if err != nil {
 				return err
@@ -96,7 +169,7 @@ func (rg *readerGrp) load() error {
 		}
 
 		rg.seqToReaderMap[seq] = reader
-		if uint32(len(rg.seqToReaderMap)) > rg.maxOpenFileNum {
+		if uint32(len(rg.seqToReaderMap)) >= rg.maxOpenReaderNum {
 			break
 		}
 	}
@@ -104,7 +177,7 @@ func (rg *readerGrp) load() error {
 	return nil
 }
 
-func (rg *readerGrp) loadReader(seq uint64) (*reader, error) {
+func (rg *readerGrp) loadSpec(seq uint64) (*reader, error) {
 	var (
 		read *reader
 		ok   bool
@@ -113,18 +186,23 @@ func (rg *readerGrp) loadReader(seq uint64) (*reader, error) {
 	if read, ok = rg.seqToReaderMap[seq]; !ok {
 		read, err = newReader(rg, seq)
 		if err != nil {
-			return read, err
+			return nil, err
 		}
 	}
 
 	err = read.refreshMsgNum()
 	if err != nil {
-		return read, err
+		return nil, err
+	}
+
+	err = read.finishRec.load()
+	if err != nil {
+		return nil, err
 	}
 
 	err = read.loadMsgIdxes()
 	if err != nil {
-		return read, err
+		return nil, err
 	}
 
 	return read, nil

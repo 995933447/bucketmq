@@ -38,7 +38,8 @@ type Writer struct {
 	flushCond         *sync.Cond
 	flushWait         sync.WaitGroup
 	status            runState
-	output            *Output
+	output            *output
+	afterWriteCh      chan struct{}
 }
 
 func (w *Writer) loop() {
@@ -123,7 +124,19 @@ func (w *Writer) doWriteMost(msgList []*Msg) error {
 		}
 	}
 doWrite:
-	return w.doWrite(msgList)
+	if err := w.doWrite(msgList); err != nil {
+		for _, msg := range msgList {
+			if msg.IsFinished {
+				continue
+			}
+			msg.IsFinished = true
+			msg.Err = err
+			msg.Wg.Done()
+		}
+		return err
+	}
+	w.afterWriteCh <- struct{}{}
+	return nil
 }
 
 func (w *Writer) doWrite(msgList []*Msg) error {
@@ -132,7 +145,10 @@ func (w *Writer) doWrite(msgList []*Msg) error {
 		if err != nil {
 			return err
 		}
-		w.output = newOutput(w, w.topic, newestSeq)
+		w.output, err = newOutput(w, w.topic, newestSeq)
+		if err != nil {
+			return err
+		}
 	}
 
 	if err := w.output.write(msgList); err != nil {
@@ -189,23 +205,19 @@ func (w *Writer) IsRunning() bool {
 	return w.status == runStateRunning
 }
 
-func NewWriter(cfg *Cfg) (*Writer, error) {
+func NewWriter(cfg *WriterCfg) *Writer {
 	writer := &Writer{
 		baseDir:           strings.TrimRight(cfg.BaseDir, string(filepath.Separator)),
 		msgChan:           make(chan *Msg, 100000),
 		flushSignCh:       make(chan struct{}),
 		unwatchCfgSignCh:  make(chan struct{}),
 		idxFileMaxItemNum: cfg.IdxFileMaxItemNum,
-	}
-	var err error
-	writer.dataFileMaxBytes, err = parseMemSizeStrToBytes(cfg.DataFileMaxSize)
-	if err != nil {
-		return nil, err
+		dataFileMaxBytes:  cfg.DataFileMaxBytes,
 	}
 
 	go func() {
 		writer.loop()
 	}()
 
-	return writer, nil
+	return writer
 }

@@ -20,6 +20,14 @@ func genFinishRcFileName(baseDir, topic string) string {
 	return fmt.Sprintf("%s/%s"+finishFileSuffix, getTopicFileDir(baseDir, topic), time.Now().Format("2006010215"))
 }
 
+func genMsgIdFileName(baseDir, topic string) string {
+	return fmt.Sprintf("%s/%s"+msgIdFileSuffix, getTopicFileDir(baseDir, topic), time.Now().Format("2006010215"))
+}
+
+func genLoadBootFileName(baseDir, topic string) string {
+	return fmt.Sprintf("%s/%s"+loadBootFileSuffix, getTopicFileDir(baseDir, topic), time.Now().Format("2006010215"))
+}
+
 func getTopicFileDir(baseDir, topic string) string {
 	return fmt.Sprintf("%s/%s%s", baseDir, topicDirPrefix, topic)
 }
@@ -148,6 +156,67 @@ func makeSeqDataFp(baseDir, topic string, seq uint64, flag int) (*os.File, error
 	}
 
 	return os.OpenFile(genDataFileName(baseDir, topic, seq), flag, os.ModePerm)
+}
+
+func makeLoadBootFp(baseDir, topic string) (*os.File, error) {
+	dir := getTopicFileDir(baseDir, topic)
+
+	if err := mkdirIfNotExist(dir); err != nil {
+		return nil, err
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), loadBootFileSuffix) {
+			continue
+		}
+
+		fp, err := os.OpenFile(dir+"/"+file.Name(), os.O_RDWR, os.ModePerm)
+		if err != nil {
+			return nil, err
+		}
+
+		return fp, nil
+	}
+
+	return os.OpenFile(genFinishRcFileName(baseDir, topic), os.O_CREATE|os.O_RDWR, os.ModePerm)
+}
+
+func makeMsgIdFp(baseDir, topic string) (*os.File, bool, error) {
+	dir := getTopicFileDir(baseDir, topic)
+
+	if err := mkdirIfNotExist(dir); err != nil {
+		return nil, false, err
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, false, err
+	}
+
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), msgIdFileSuffix) {
+			continue
+		}
+
+		fp, err := os.OpenFile(dir+"/"+file.Name(), os.O_RDWR, os.ModePerm)
+		if err != nil {
+			return nil, false, err
+		}
+
+		return fp, false, nil
+	}
+
+	fp, err := os.OpenFile(genLoadBootFileName(baseDir, topic), os.O_CREATE|os.O_RDWR, os.ModePerm)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return fp, true, nil
 }
 
 func makeFinishRcFp(baseDir, topic string) (*os.File, error) {

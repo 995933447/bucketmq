@@ -1,12 +1,17 @@
 package engine
 
-type Cfg struct {
-	BaseDir              string   `validator:"required" json:"base_dir"`
-	CompressTopics       []string `json:"compress_topics"`
-	IdxFileMaxItemNum    uint32   `json:"idx_file_max_item_num"`
-	DataFileMaxSize      string   `json:"data_file_max_size"` // format:XX/XXB/XXKB/XXK/XXM/XXMB/XXG/XXGB
-	BlackTopics          []string `json:"black_topics"`
-	WhiteTopics          []string `json:"white_topics"`
-	MemMaxSize           string   `json:"mem_max_size"` // format:XX/XXB/XXKB/XXK/XXM/XXMB/XXG/XXGB
-	MaxConcurrentForward uint32   `json:"max_concurrent_forward"`
+type WriterCfg struct {
+	BaseDir           string
+	IdxFileMaxItemNum uint32
+	DataFileMaxBytes  uint32
+	DataFileMaxSize   string
+}
+
+type SubscriberCfg struct {
+	LoadMsgBootId                        uint32
+	BaseDir, Topic, ConsumerName         string
+	ConsumerNum, MaxConsumerNumPerBucket uint32
+	MsgWeight                            MsgWeight
+	LodeMode                             LoadMsgMode
+	StartMsgId                           uint64
 }

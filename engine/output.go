@@ -8,20 +8,44 @@ import (
 	"time"
 )
 
-func newOutput(writer *Writer, topic string, seq uint64) *Output {
-	return &Output{
+// data file format is:
+// item begin marker | data | item end marker
+//
+//	2                |   V  |       2
+//
+// index file format is
+// item begin marker | created at | data offset | data len |  enabled compress |   priority  | bucketId | delay sec | retryCnt | msgId | item end marker
+//
+//	2                |      4     |   4         |      4   |        1          |       1	 |      4   |	   4     |  4      |   8   |   2
+
+const (
+	idxBytes = 38
+)
+
+const (
+	idxFileSuffix  = ".idx"
+	dataFileSuffix = ".dat"
+)
+
+func newOutput(writer *Writer, topic string, seq uint64) (*output, error) {
+	out := &output{
 		Writer: writer,
-		topic:  topic,
 		seq:    seq,
 	}
+	var err error
+	out.msgIdGen, err = newMsgIdGen(out.Writer.baseDir, out.Writer.topic)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
 }
 
-type Output struct {
+type output struct {
 	*Writer
-	topic            string
-	seq              uint64
-	idxFp            *os.File
-	dataFp           *os.File
+	seq    uint64
+	idxFp  *os.File
+	dataFp *os.File
+	*msgIdGen
 	writtenIdxNum    uint32
 	writtenDataBytes uint32
 	openFileTime     time.Time
@@ -29,7 +53,7 @@ type Output struct {
 	dataBuf          []byte
 }
 
-func (o *Output) isCorrupted() (bool, error) {
+func (o *output) isCorrupted() (bool, error) {
 	if o.idxFp != nil {
 		fileState, err := o.idxFp.Stat()
 		if err != nil {
@@ -66,7 +90,7 @@ func (o *Output) isCorrupted() (bool, error) {
 	return false, nil
 }
 
-func (o *Output) syncDisk() {
+func (o *output) syncDisk() {
 	if o.idxFp != nil {
 		if err := o.idxFp.Sync(); err != nil {
 			util.Logger.Warn(nil, err)
@@ -79,7 +103,7 @@ func (o *Output) syncDisk() {
 	}
 }
 
-func (o *Output) write(msgList []*Msg) error {
+func (o *output) write(msgList []*Msg) error {
 	if len(msgList) == 0 {
 		return nil
 	}
@@ -184,8 +208,9 @@ func (o *Output) write(msgList []*Msg) error {
 			bin.PutUint32(idxBuf[14:18], msg.bucketId)
 			bin.PutUint32(idxBuf[18:22], msg.delaySec)
 			bin.PutUint32(idxBuf[22:26], msg.retryCnt)
-			bin.PutUint16(idxBuf[26:], bufBoundaryEnd)
-			idxBuf = idxBuf[26+bufBoundaryBytes:]
+			bin.PutUint64(idxBuf[26:34], o.curMaxMsgId+uint64(i+1))
+			bin.PutUint16(idxBuf[34:], bufBoundaryEnd)
+			idxBuf = idxBuf[34+bufBoundaryBytes:]
 
 			dataBufOffset += uint32(dataItemBufBytes)
 		}
@@ -214,6 +239,10 @@ func (o *Output) write(msgList []*Msg) error {
 			n += more
 		}
 
+		if err := o.msgIdGen.Incr(uint64(batchWriteIdxNum)); err != nil {
+			return err
+		}
+
 		for _, msg := range waitingResMsgList {
 			if msg.WriteMsgResWait != nil {
 				msg.WriteMsgResWait.IsFinished = true
@@ -238,7 +267,7 @@ func (o *Output) write(msgList []*Msg) error {
 	return nil
 }
 
-func (o *Output) close() {
+func (o *output) close() {
 	if o.idxFp != nil {
 		_ = o.idxFp.Close()
 	}
@@ -250,18 +279,18 @@ func (o *Output) close() {
 	o.openFileTime = time.Time{}
 }
 
-func (o *Output) openNewFile() error {
+func (o *output) openNewFile() error {
 	curSeq := o.seq
 	if o.idxFp != nil && o.dataFp != nil {
-		curSeq++
+		curSeq = o.curMaxMsgId + 1
 	}
 
-	idxFp, err := makeSeqIdxFp(o.baseDir, o.topic, curSeq, os.O_CREATE|os.O_APPEND)
+	idxFp, err := makeSeqIdxFp(o.Writer.baseDir, o.Writer.topic, curSeq, os.O_CREATE|os.O_APPEND)
 	if err != nil {
 		return err
 	}
 
-	dataFp, err := makeSeqDataFp(o.baseDir, o.topic, curSeq, os.O_CREATE|os.O_APPEND)
+	dataFp, err := makeSeqDataFp(o.Writer.baseDir, o.Writer.topic, curSeq, os.O_CREATE|os.O_APPEND)
 	if err != nil {
 		return err
 	}

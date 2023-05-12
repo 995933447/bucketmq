@@ -6,7 +6,7 @@ import (
 )
 
 const (
-	maxOpenFileName = 1000
+	maxOpenReaderNum = 1000
 )
 
 type confirmMsgReq struct {
@@ -34,22 +34,22 @@ func (r *bucketPendingNumRec) subPending(bucketId uint32) {
 	r.bucketPendingNumMap[bucketId] = pendingNum
 }
 
-func NewSubscriber(baseDir, topic, consumerName string, globalMaxConcurWorkerNum, bucketMaxConcurWorkerNum uint32, weight MsgWeight) (*Subscriber, error) {
+func NewSubscriber(cfg *SubscriberCfg) (*Subscriber, error) {
 	subscriber := &Subscriber{
-		baseDir:                  baseDir,
-		topic:                    topic,
-		consumerName:             consumerName,
-		globalMaxConcurWorkerNum: globalMaxConcurWorkerNum,
-		bucketMaxConcurWorkerNum: bucketMaxConcurWorkerNum,
-		queue:                    newQueue(weight),
-		exitCh:                   make(chan struct{}),
-		readyConsumerCh:          make(chan chan *FileMsg),
-		watchWrittenCh:           make(chan uint64),
-		confirmMsgCh:             make(chan *confirmMsgReq),
+		baseDir:                 cfg.BaseDir,
+		topic:                   cfg.Topic,
+		consumerName:            cfg.ConsumerName,
+		consumerNum:             cfg.ConsumerNum,
+		maxConsumerNumPerBucket: cfg.MaxConsumerNumPerBucket,
+		queue:                   newQueue(cfg.MsgWeight),
+		exitCh:                  make(chan struct{}),
+		readyConsumerCh:         make(chan chan *FileMsg),
+		watchWrittenCh:          make(chan uint64),
+		confirmMsgCh:            make(chan *confirmMsgReq),
 	}
 
 	var err error
-	subscriber.readerGrp, err = newReaderGroup(subscriber, maxOpenFileName)
+	subscriber.readerGrp, err = newReaderGrp(subscriber, cfg.LodeMode, cfg.StartMsgId, maxOpenReaderNum, cfg.LoadMsgBootId)
 	if err != nil {
 		return nil, err
 	}
@@ -58,12 +58,12 @@ func NewSubscriber(baseDir, topic, consumerName string, globalMaxConcurWorkerNum
 }
 
 type Subscriber struct {
-	baseDir                  string
-	topic                    string
-	consumerName             string
-	globalMaxConcurWorkerNum uint32
-	bucketMaxConcurWorkerNum uint32
-	bucketPendingNumRec      *bucketPendingNumRec
+	baseDir                 string
+	topic                   string
+	consumerName            string
+	consumerNum             uint32
+	maxConsumerNumPerBucket uint32
+	bucketPendingNumRec     *bucketPendingNumRec
 	*queue
 	*readerGrp
 	exitCh          chan struct{}
@@ -74,12 +74,11 @@ type Subscriber struct {
 }
 
 func (s *Subscriber) Start() {
-	for i := uint32(0); i < s.globalMaxConcurWorkerNum; i++ {
+	for i := uint32(0); i < s.consumerNum; i++ {
 		consumer := newConsumer(s)
 		s.consumers = append(s.consumers, consumer)
 		consumer.run()
 	}
-
 	s.loop()
 }
 
@@ -88,7 +87,7 @@ func (s *Subscriber) loop() {
 	var waitConsumeChs []chan *FileMsg
 	isBucketPendingNotFull := func(bucket *bucket) bool {
 		pendingNum, _ := s.bucketPendingNumRec.bucketPendingNumMap[bucket.id]
-		return pendingNum < s.bucketMaxConcurWorkerNum
+		return pendingNum < s.maxConsumerNumPerBucket
 	}
 	for {
 		select {
@@ -116,17 +115,22 @@ func (s *Subscriber) loop() {
 			}
 			waitConsumeChs = append(waitConsumeChs, consumeCh)
 		case seq := <-s.watchWrittenCh:
-			if _, ok := s.readerGrp.seqToReaderMap[seq]; !ok {
-				break
+			if len(s.readerGrp.seqToReaderMap) > 0 {
+				if _, ok := s.readerGrp.seqToReaderMap[seq]; !ok {
+					break
+				}
 			}
 
-			if _, err := s.readerGrp.loadReader(seq); err != nil {
+			reader, err := s.readerGrp.loadSpec(seq)
+			if err != nil {
 				util.Logger.Error(nil, err)
 				break
 			}
 
+			s.readerGrp.seqToReaderMap[seq] = reader
+
 			if len(waitConsumeChs) == 0 {
-				continue
+				break
 			}
 
 			msg := s.queue.pop(isBucketPendingNotFull)

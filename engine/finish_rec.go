@@ -33,12 +33,12 @@ func newFinishRec(r *reader) (*finishRec, error) {
 	}
 
 	var err error
-	rec.idxFp, err = makeSeqIdxFp(r.baseDir, r.topic, r.seq, os.O_CREATE|os.O_RDONLY)
+	rec.idxFp, err = makeSeqIdxFp(r.reader.readerGrp.Subscriber.baseDir, r.reader.readerGrp.Subscriber.topic, r.seq, os.O_CREATE|os.O_RDONLY)
 	if err != nil {
 		return nil, err
 	}
 
-	rec.fp, err = makeFinishRcFp(r.baseDir, r.topic)
+	rec.fp, err = makeFinishRcFp(r.reader.readerGrp.Subscriber.baseDir, r.reader.readerGrp.Subscriber.topic)
 	if err != nil {
 		return nil, err
 	}
