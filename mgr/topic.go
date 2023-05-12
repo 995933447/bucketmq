@@ -1,4 +1,4 @@
-package cfgcenter
+package mgr
 
 import (
 	"github.com/995933447/bucketmq/engine"
