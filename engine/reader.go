@@ -113,7 +113,7 @@ func (r *reader) loadMsgIdxes() error {
 		}
 	} else if !r.readerGrp.isFirstBoot {
 		// seq equal to min msg id of idx file, so seq + idx offset = msg id
-		startMsgId = r.loadBoot.bootSeq + uint64(r.loadBoot.bootIdxOffset)
+		startMsgId = r.bootMarker.bootSeq + uint64(r.bootMarker.bootIdxOffset)
 	} else {
 		fileState, err := r.idxFp.Stat()
 		if err != nil {
@@ -205,7 +205,7 @@ func (r *reader) loadMsgIdxes() error {
 				}
 
 				if r.readerGrp.isFirstBoot {
-					if err = r.readerGrp.loadBoot.recBoot(r.readerGrp.bootId, item.seq, item.offset); err != nil {
+					if err = r.readerGrp.bootMarker.mark(r.readerGrp.bootId, item.seq, item.offset); err != nil {
 						return err
 					}
 					r.readerGrp.isFirstBoot = false

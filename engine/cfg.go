@@ -9,7 +9,7 @@ type WriterCfg struct {
 
 type SubscriberCfg struct {
 	LoadMsgBootId                        uint32
-	BaseDir, Topic, ConsumerName         string
+	BaseDir, Topic, SubscriberName       string
 	ConsumerNum, MaxConsumerNumPerBucket uint32
 	MsgWeight                            MsgWeight
 	LodeMode                             LoadMsgMode

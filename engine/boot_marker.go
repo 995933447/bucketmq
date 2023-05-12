@@ -16,8 +16,8 @@ const (
 	loadBootFileSuffix = ".boot"
 )
 
-func newLoadBoot(readerGrp *readerGrp) (*loadBoot, error) {
-	boot := &loadBoot{
+func newBootMarker(readerGrp *readerGrp) (*bootMarker, error) {
+	boot := &bootMarker{
 		readerGrp: readerGrp,
 	}
 	var err error
@@ -31,7 +31,7 @@ func newLoadBoot(readerGrp *readerGrp) (*loadBoot, error) {
 	return boot, nil
 }
 
-type loadBoot struct {
+type bootMarker struct {
 	*readerGrp
 	fp            *os.File
 	bootId        uint32
@@ -39,7 +39,7 @@ type loadBoot struct {
 	bootIdxOffset uint32
 }
 
-func (b *loadBoot) load() error {
+func (b *bootMarker) load() error {
 	buf, err := io.ReadAll(b.fp)
 	if err != nil && err != io.EOF {
 		return err
@@ -63,7 +63,7 @@ func (b *loadBoot) load() error {
 	return nil
 }
 
-func (b *loadBoot) recBoot(bootId uint32, seq uint64, idxOffset uint32) error {
+func (b *bootMarker) mark(bootId uint32, seq uint64, idxOffset uint32) error {
 	var buf []byte
 	binary.LittleEndian.PutUint16(buf[:bufBoundaryBytes], bufBoundaryBegin)
 	binary.LittleEndian.PutUint32(buf[bufBoundaryBytes:bufBoundaryBytes+4], bootId)

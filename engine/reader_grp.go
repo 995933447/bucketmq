@@ -29,14 +29,14 @@ func newReaderGrp(subscriber *Subscriber, loadMode LoadMsgMode, startMsgId uint6
 		return nil, err
 	}
 
-	grp.loadBoot, err = newLoadBoot(grp)
+	grp.bootMarker, err = newBootMarker(grp)
 	if err != nil {
 		return nil, err
 	}
 
-	if bootId != grp.loadBoot.bootId {
+	if bootId != grp.bootMarker.bootId {
 		grp.isFirstBoot = true
-		grp.loadBoot.bootId = bootId
+		grp.bootMarker.bootId = bootId
 	}
 
 	if err = grp.load(); err != nil {
@@ -49,7 +49,7 @@ func newReaderGrp(subscriber *Subscriber, loadMode LoadMsgMode, startMsgId uint6
 type readerGrp struct {
 	*Subscriber
 	*msgIdGen
-	*loadBoot
+	*bootMarker
 	loadMode         LoadMsgMode
 	startMsgId       uint64
 	bootId           uint32
@@ -121,7 +121,7 @@ func (rg *readerGrp) load() error {
 			}
 		case loadModeNewest:
 			if !rg.isFirstBoot {
-				if seq >= rg.loadBoot.bootSeq {
+				if seq >= rg.bootMarker.bootSeq {
 					validSeqs = append(validSeqs, seq)
 				}
 				break

@@ -38,7 +38,7 @@ func NewSubscriber(cfg *SubscriberCfg) (*Subscriber, error) {
 	subscriber := &Subscriber{
 		baseDir:                 cfg.BaseDir,
 		topic:                   cfg.Topic,
-		consumerName:            cfg.ConsumerName,
+		subscriberName:          cfg.SubscriberName,
 		consumerNum:             cfg.ConsumerNum,
 		maxConsumerNumPerBucket: cfg.MaxConsumerNumPerBucket,
 		queue:                   newQueue(cfg.MsgWeight),
@@ -60,7 +60,7 @@ func NewSubscriber(cfg *SubscriberCfg) (*Subscriber, error) {
 type Subscriber struct {
 	baseDir                 string
 	topic                   string
-	consumerName            string
+	subscriberName          string
 	consumerNum             uint32
 	maxConsumerNumPerBucket uint32
 	bucketPendingNumRec     *bucketPendingNumRec
