@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package rpc;
+
+service Consumer {
+    rpc Consume(ConsumeReq) returns (ConsumeResp) {}
+    
+    rpc Ping(PingReq) returns (PingResp) {}
+}
+
+message ConsumeReq {
+    string topic = 1;
+    string subscriber = 2;
+    bytes data = 3;
+    uint32 retried_cnt = 4;
+}
+
+message ConsumeResp {
+}
+
+message PingReq {
+}
+
+message PingResp {
+}

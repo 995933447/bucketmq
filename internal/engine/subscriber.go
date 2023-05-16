@@ -1,12 +1,16 @@
 package engine
 
 import (
-	"github.com/995933447/bucketmq/util"
+	"github.com/995933447/bucketmq/internal/util"
+	"github.com/995933447/microgosuit/discovery"
 	"time"
 )
 
 const (
-	maxOpenReaderNum = 1000
+	maxOpenReaderNum             = 1000
+	concurConsumeNum             = 1000
+	maxConcurConsumeNumPerBucket = 1
+	maxConsumeMs                 = 300 * 10000
 )
 
 type confirmMsgReq struct {
@@ -34,18 +38,21 @@ func (r *bucketPendingNumRec) subPending(bucketId uint32) {
 	r.bucketPendingNumMap[bucketId] = pendingNum
 }
 
-func NewSubscriber(cfg *SubscriberCfg) (*Subscriber, error) {
+func NewSubscriber(discover discovery.Discovery, cfg *SubscriberCfg) (*Subscriber, error) {
 	subscriber := &Subscriber{
-		baseDir:                 cfg.BaseDir,
-		topic:                   cfg.Topic,
-		subscriberName:          cfg.SubscriberName,
-		consumerNum:             cfg.ConsumerNum,
-		maxConsumerNumPerBucket: cfg.MaxConsumerNumPerBucket,
-		queue:                   newQueue(cfg.MsgWeight),
-		exitCh:                  make(chan struct{}),
-		readyConsumerCh:         make(chan chan *FileMsg),
-		watchWrittenCh:          make(chan uint64),
-		confirmMsgCh:            make(chan *confirmMsgReq),
+		baseDir:                      cfg.BaseDir,
+		topic:                        cfg.Topic,
+		name:                         cfg.Name,
+		concurConsumeNum:             cfg.ConcurConsumeNum,
+		maxConcurConsumeNumPerBucket: cfg.MaxConcurConsumeNumPerBucket,
+		queue:                        newQueue(cfg.MsgWeight, cfg.IsSerial),
+		Discovery:                    discover,
+		exitCh:                       make(chan struct{}),
+		readyWorkerCh:                make(chan chan *FileMsg),
+		watchWrittenCh:               make(chan uint64),
+		confirmMsgCh:                 make(chan *confirmMsgReq),
+		consumer:                     cfg.Consumer,
+		maxConsumeMs:                 cfg.MaxConsumeMs,
 	}
 
 	var err error
@@ -54,32 +61,48 @@ func NewSubscriber(cfg *SubscriberCfg) (*Subscriber, error) {
 		return nil, err
 	}
 
+	if subscriber.concurConsumeNum == 0 {
+		subscriber.concurConsumeNum = concurConsumeNum
+		subscriber.maxConcurConsumeNumPerBucket = maxConcurConsumeNumPerBucket
+	}
+
+	if subscriber.maxConsumeMs == 0 {
+		subscriber.maxConsumeMs = maxConsumeMs
+	}
+
 	return subscriber, nil
 }
 
 type Subscriber struct {
-	baseDir                 string
-	topic                   string
-	subscriberName          string
-	consumerNum             uint32
-	maxConsumerNumPerBucket uint32
-	bucketPendingNumRec     *bucketPendingNumRec
 	*queue
 	*readerGrp
-	exitCh          chan struct{}
-	readyConsumerCh chan chan *FileMsg
-	watchWrittenCh  chan uint64
-	confirmMsgCh    chan *confirmMsgReq
-	consumers       []*consumer
+	discovery.Discovery
+	baseDir                      string
+	topic                        string
+	consumer                     string
+	name                         string
+	concurConsumeNum             uint32
+	maxConcurConsumeNumPerBucket uint32
+	bucketPendingNumRec          *bucketPendingNumRec
+	exitCh                       chan struct{}
+	readyWorkerCh                chan chan *FileMsg
+	watchWrittenCh               chan uint64
+	confirmMsgCh                 chan *confirmMsgReq
+	workers                      []*worker
+	maxConsumeMs                 uint32
 }
 
 func (s *Subscriber) Start() {
-	for i := uint32(0); i < s.consumerNum; i++ {
-		consumer := newConsumer(s)
-		s.consumers = append(s.consumers, consumer)
-		consumer.run()
+	for i := uint32(0); i < s.concurConsumeNum; i++ {
+		worker := newWorker(s)
+		s.workers = append(s.workers, worker)
+		worker.run()
 	}
 	s.loop()
+}
+
+func (s *Subscriber) Exit() {
+	s.exitCh <- struct{}{}
 }
 
 func (s *Subscriber) loop() {
@@ -87,17 +110,18 @@ func (s *Subscriber) loop() {
 	var waitConsumeChs []chan *FileMsg
 	isBucketPendingNotFull := func(bucket *bucket) bool {
 		pendingNum, _ := s.bucketPendingNumRec.bucketPendingNumMap[bucket.id]
-		return pendingNum < s.maxConsumerNumPerBucket
+		return pendingNum < s.maxConcurConsumeNumPerBucket
 	}
 	for {
 		select {
 		case <-migrateDelayMsgTk.C:
 			s.queue.migrateExpired()
 		case <-s.exitCh:
-			for _, consumer := range s.consumers {
-				consumer.exit()
+			for _, worker := range s.workers {
+				worker.exit()
 			}
 			s.readerGrp.close()
+			goto out
 		case confirmReq := <-s.confirmMsgCh:
 			s.bucketPendingNumRec.subPending(confirmReq.bucketId)
 			reader, ok := s.readerGrp.seqToReaderMap[confirmReq.seq]
@@ -107,7 +131,7 @@ func (s *Subscriber) loop() {
 			reader.confirmMsgCh <- &confirmedMsgIdx{
 				idxOffset: confirmReq.idxOffset,
 			}
-		case consumeCh := <-s.readyConsumerCh:
+		case consumeCh := <-s.readyWorkerCh:
 			if msg := s.queue.pop(isBucketPendingNotFull); msg != nil {
 				s.bucketPendingNumRec.addPending(msg.bucketId)
 				consumeCh <- msg
@@ -144,4 +168,6 @@ func (s *Subscriber) loop() {
 			readyConsumeCh <- msg
 		}
 	}
+out:
+	return
 }

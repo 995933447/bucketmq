@@ -10,6 +10,10 @@ github.com/995933447/log-go v0.0.0-20230420123341-5d684963433b h1:mMs9jXdhcSpesQ
 github.com/995933447/log-go v0.0.0-20230420123341-5d684963433b/go.mod h1:8nYLjLQ598TrCziO2tAADhEFlNxySV+9phaQBzCaSZo=
 github.com/995933447/microgosuit v0.0.0-20230510065437-cba346feb94c h1:ikd/5hQ6jBlZORMPXnvCkHRzVMx+8GXVKuiLd3v4a9c=
 github.com/995933447/microgosuit v0.0.0-20230510065437-cba346feb94c/go.mod h1:30PIj/2wXz+Fmaym9GXBrB9l6Nbk7aVLsCOcI/hKeqk=
+github.com/995933447/microgosuit v0.0.0-20230516095442-abb665525bd1 h1:ynvcF8++aQUajFue0Nb6zABNZfyqD++2Tr2ppWl/QuU=
+github.com/995933447/microgosuit v0.0.0-20230516095442-abb665525bd1/go.mod h1:mDce3450DpBztWRi+hvq+HK4XOtyFbISz7pKohWS+5M=
+github.com/995933447/runtimeutil v0.0.0-20230427124214-00d5b30c3fd6 h1:LcqGvldZ2jZ5f5b8ASMdwycQfAUPWnfaOj4TXxaZEXE=
+github.com/995933447/runtimeutil v0.0.0-20230427124214-00d5b30c3fd6/go.mod h1:Yag71VUobvmLPbIxwn5Qpx0ZEj5tW3ZuqWCs+8PUh/4=
 github.com/995933447/simpletrace v0.0.0-20230217061256-c25a914bd376 h1:hIHav2TTYiAGn87d9CGiuuty5cT/YBOb5Uxs52FoDgs=
 github.com/995933447/simpletrace v0.0.0-20230217061256-c25a914bd376/go.mod h1:Kh2+nE3eCIOSIwSo8Sxj/MbWt1KPMJJz+9SHptuYr6s=
 github.com/995933447/std-go v0.0.0-20220806175833-ab3496c0b696 h1:GzBuvejakMWMZ6QWpbpcFmJb9WYrZ++yOrm/IEap+hw=
@@ -82,6 +86,8 @@ github.com/google/uuid v1.3.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+
 github.com/grpc-ecosystem/grpc-gateway v1.16.0/go.mod h1:BDjrQk3hbvj6Nolgz8mAMFbcEtjT1g+wF4CSlocrBnw=
 github.com/gzjjyz/srvlib v0.0.6 h1:PPHdFedP3/3DaK9HcDEhwrb1BV9XE8D3a31lpmmtilA=
 github.com/gzjjyz/srvlib v0.0.6/go.mod h1:AMaDOAWcGRdHSST6l47UfAXlyMoWH/EhkN9KgxaAsSo=
+github.com/gzjjyz/srvlib v0.2.0 h1:9A6SdRWa+iMbTlZGfhQECImRHhzaejhTqEfftpUJkpU=
+github.com/gzjjyz/srvlib v0.2.0/go.mod h1:AVW3LfAuFAgCbCMOzryoKH2SjE5RR3MO5vwS9GTjxUA=
 github.com/howeyc/fsnotify v0.9.0 h1:0gtV5JmOKH4A8SsFxG2BczSeXWWPvcMT0euZt5gDAxY=
 github.com/howeyc/fsnotify v0.9.0/go.mod h1:41HzSPxBGeFRQKEEwgh49TRw/nKBsYZ2cF1OzPjSJsA=
 github.com/huandu/go-assert v1.1.5/go.mod h1:yOLvuqZwmcHIC5rIzrBhT7D3Q9c3GFnd0JrPVhn/06U=
@@ -102,10 +108,16 @@ github.com/yuin/goldmark v1.2.1/go.mod h1:3hX8gzYuyVAZsxl0MRgGTJEmQBFcNTphYh9dec
 github.com/yuin/goldmark v1.3.5/go.mod h1:mwnBkeHKe2W/ZEtQ+71ViKU8L12m81fl3OWwC1Zlc8k=
 go.etcd.io/etcd/api/v3 v3.5.8 h1:Zf44zJszoU7zRV0X/nStPenegNXoFDWcB/MwrJbA+L4=
 go.etcd.io/etcd/api/v3 v3.5.8/go.mod h1:uyAal843mC8uUVSLWz6eHa/d971iDGnCRpmKd2Z+X8k=
+go.etcd.io/etcd/api/v3 v3.5.9 h1:4wSsluwyTbGGmyjJktOf3wFQoTBIURXHnq9n/G/JQHs=
+go.etcd.io/etcd/api/v3 v3.5.9/go.mod h1:uyAal843mC8uUVSLWz6eHa/d971iDGnCRpmKd2Z+X8k=
 go.etcd.io/etcd/client/pkg/v3 v3.5.8 h1:tPp9YRn/UBFAHdhOQUII9eUs7aOK35eulpMhX4YBd+M=
 go.etcd.io/etcd/client/pkg/v3 v3.5.8/go.mod h1:y+CzeSmkMpWN2Jyu1npecjB9BBnABxGM4pN8cGuJeL4=
+go.etcd.io/etcd/client/pkg/v3 v3.5.9 h1:oidDC4+YEuSIQbsR94rY9gur91UPL6DnxDCIYd2IGsE=
+go.etcd.io/etcd/client/pkg/v3 v3.5.9/go.mod h1:y+CzeSmkMpWN2Jyu1npecjB9BBnABxGM4pN8cGuJeL4=
 go.etcd.io/etcd/client/v3 v3.5.8 h1:B6ngTKZSWWowHEoaucOKHQR/AtZKaoHLiUpWxOLG4l4=
 go.etcd.io/etcd/client/v3 v3.5.8/go.mod h1:idZYIPVkttBJBiRigkB5EM0MmEyx8jcl18zCV3F5noc=
+go.etcd.io/etcd/client/v3 v3.5.9 h1:r5xghnU7CwbUxD/fbUtRyJGaYNfDun8sp/gTr1hew6E=
+go.etcd.io/etcd/client/v3 v3.5.9/go.mod h1:i/Eo5LrZ5IKqpbtpPDuaUnDOUv471oDg8cjQaUr2MbA=
 go.opentelemetry.io/proto/otlp v0.7.0/go.mod h1:PqfVotwruBrMGOCsRd/89rSnXhoiJIqeYNgFYFoEGnI=
 go.uber.org/atomic v1.7.0 h1:ADUqmZGgLDDfbSL9ZmPxKTybcoEYHgpYfELNoN+7hsw=
 go.uber.org/atomic v1.7.0/go.mod h1:fEN4uk6kAWBTFdckzkM89CLk9XfWZrxpCo0nPH17wJc=

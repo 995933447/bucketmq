@@ -6,10 +6,18 @@ import (
 	"time"
 )
 
+type EtcdCfg struct {
+	ConnectTimeoutMs int32    `json:"connect_timeout_ms"`
+	Endpoints        []string `json:"endpoints"`
+}
+
 type Cfg struct {
-	DataDir string
-	NodeGrp string
-	Cluster string
+	Etcd              *EtcdCfg
+	DataDir           string
+	NodeGrp           string
+	Cluster           string
+	IdxFileMaxItemNum uint32
+	DataFileMaxSize   string
 }
 
 var (

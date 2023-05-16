@@ -2,7 +2,7 @@ package engine
 
 import (
 	"encoding/binary"
-	"github.com/995933447/bucketmq/util"
+	"github.com/995933447/bucketmq/internal/util"
 	"io"
 	"os"
 )
@@ -14,6 +14,7 @@ type FileMsg struct {
 	createdAt         uint32
 	priority          uint8
 	retryAt           uint32
+	retriedCnt        uint32
 	maxRetryCnt       uint32
 	delaySec          uint32
 	bucketId          uint32

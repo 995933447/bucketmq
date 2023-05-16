@@ -1,7 +1,7 @@
 package engine
 
 import (
-	"github.com/995933447/bucketmq/util"
+	"github.com/995933447/bucketmq/internal/util"
 	"path/filepath"
 	"strings"
 	"sync"

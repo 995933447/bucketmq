@@ -11,7 +11,8 @@ require (
 require (
 	github.com/995933447/confloader v0.0.0-20230314141707-e7b191386ae2 // indirect
 	github.com/995933447/elemutil v0.0.0-20230419031952-50d9019c3314 // indirect
-	github.com/995933447/microgosuit v0.0.0-20230510065437-cba346feb94c // indirect
+	github.com/995933447/microgosuit v0.0.0-20230516095442-abb665525bd1 // indirect
+	github.com/995933447/runtimeutil v0.0.0-20230427124214-00d5b30c3fd6 // indirect
 	github.com/995933447/simpletrace v0.0.0-20230217061256-c25a914bd376 // indirect
 	github.com/995933447/stringhelper-go v0.0.0-20221220072216-628db3bc29d8 // indirect
 	github.com/BurntSushi/toml v1.2.1 // indirect
@@ -24,12 +25,12 @@ require (
 	github.com/gogo/protobuf v1.3.2 // indirect
 	github.com/golang/protobuf v1.5.3 // indirect
 	github.com/google/uuid v1.3.0 // indirect
-	github.com/gzjjyz/srvlib v0.0.6 // indirect
+	github.com/gzjjyz/srvlib v0.2.0 // indirect
 	github.com/howeyc/fsnotify v0.9.0 // indirect
 	github.com/huandu/skiplist v1.2.0 // indirect
-	go.etcd.io/etcd/api/v3 v3.5.8 // indirect
-	go.etcd.io/etcd/client/pkg/v3 v3.5.8 // indirect
-	go.etcd.io/etcd/client/v3 v3.5.8 // indirect
+	go.etcd.io/etcd/api/v3 v3.5.9 // indirect
+	go.etcd.io/etcd/client/pkg/v3 v3.5.9 // indirect
+	go.etcd.io/etcd/client/v3 v3.5.9 // indirect
 	go.uber.org/atomic v1.7.0 // indirect
 	go.uber.org/multierr v1.6.0 // indirect
 	go.uber.org/zap v1.24.0 // indirect

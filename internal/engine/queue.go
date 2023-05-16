@@ -105,9 +105,10 @@ func (m *msgTable) pop(msgWeight MsgWeight) (*FileMsg, error) {
 	return nil, nil
 }
 
-func newBucket(id uint32) *bucket {
+func newBucket(id uint32, queue *queue) *bucket {
 	return &bucket{
 		id:            id,
+		queue:         queue,
 		retryMsgQueue: newRetryMsgQueue(nil),
 	}
 }
@@ -122,6 +123,8 @@ type bucket struct {
 	prevOfBuckets *bucket
 	// 串行重试队列
 	*retryMsgQueue
+
+	*queue
 }
 
 // 待消费的消息长度
@@ -134,7 +137,19 @@ func (b *bucket) len() uint32 {
 
 func (b *bucket) pop(msgWeight MsgWeight) *FileMsg {
 	if b.retryMsgQueue.Len() > 0 {
-		return b.popRetry()
+		msgItem := b.popRetry()
+
+		if msgItem != nil {
+			return msgItem
+		}
+
+		if b.queue.isSerial {
+			return nil
+		}
+
+		if b.retryMsgQueue.Len() > 100 {
+			return msgItem
+		}
 	}
 
 	msgItem, err := b.msgTable.pop(msgWeight)
@@ -272,11 +287,12 @@ func (q *delayMsgQueue) remove(msgItem *FileMsg) bool {
 	return false
 }
 
-func newQueue(msgWeight MsgWeight) *queue {
+func newQueue(msgWeight MsgWeight, isSerial bool) *queue {
 	return &queue{
 		bucketHash:    map[uint32]*bucket{},
 		msgWeight:     msgWeight,
 		delayMsgQueue: newDelayMsgQueue(),
+		isSerial:      isSerial,
 	}
 }
 
@@ -287,6 +303,7 @@ type queue struct {
 	tailOfBuckets   *bucket
 	msgWeight       MsgWeight
 	delayMsgQueue   *delayMsgQueue
+	isSerial        bool
 }
 
 func (q *queue) push(msg *FileMsg, isFirstEnqueue bool) {
@@ -300,12 +317,12 @@ func (q *queue) push(msg *FileMsg, isFirstEnqueue bool) {
 		ok         bool
 	)
 	if len(q.bucketHash) == 0 {
-		specBucket = newBucket(msg.bucketId)
+		specBucket = newBucket(msg.bucketId, q)
 		q.headerOfBuckets = specBucket
 		q.tailOfBuckets = specBucket
 		q.bucketHash[msg.bucketId] = specBucket
 	} else if specBucket, ok = q.bucketHash[msg.bucketId]; !ok {
-		specBucket = newBucket(msg.bucketId)
+		specBucket = newBucket(msg.bucketId, q)
 		specBucket.prevOfBuckets = q.tailOfBuckets
 		q.tailOfBuckets.nextOfBuckets = specBucket
 		q.tailOfBuckets = specBucket

@@ -66,7 +66,7 @@ func TestRetryMsgQueue(t *testing.T) {
 }
 
 func TestBucket(t *testing.T) {
-	buck := newBucket(1)
+	buck := newBucket(1, newQueue(MsgWeightPriority, true))
 	buck.push(&FileMsg{
 		priority:  MaxMsgPriority,
 		createdAt: uint32(time.Now().Unix()),
@@ -136,7 +136,7 @@ func TestDelayMsgQueue(t *testing.T) {
 }
 
 func TestQueue(t *testing.T) {
-	q := newQueue(MsgWeightPriority)
+	q := newQueue(MsgWeightPriority, true)
 	q.push(&FileMsg{
 		delaySec: 1,
 		bucketId: 3,

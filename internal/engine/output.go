@@ -2,7 +2,7 @@ package engine
 
 import (
 	"encoding/binary"
-	"github.com/995933447/bucketmq/util"
+	"github.com/995933447/bucketmq/internal/util"
 	"github.com/golang/snappy"
 	"os"
 	"time"
