@@ -11,7 +11,7 @@ require (
 require (
 	github.com/995933447/confloader v0.0.0-20230314141707-e7b191386ae2 // indirect
 	github.com/995933447/elemutil v0.0.0-20230419031952-50d9019c3314 // indirect
-	github.com/995933447/microgosuit v0.0.0-20230516095442-abb665525bd1 // indirect
+	github.com/995933447/microgosuit v0.0.0-20230516123906-5626fc3e8bff // indirect
 	github.com/995933447/runtimeutil v0.0.0-20230427124214-00d5b30c3fd6 // indirect
 	github.com/995933447/simpletrace v0.0.0-20230217061256-c25a914bd376 // indirect
 	github.com/995933447/stringhelper-go v0.0.0-20221220072216-628db3bc29d8 // indirect

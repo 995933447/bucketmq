@@ -16,7 +16,7 @@ func NewCli(cluster string, etcdCfg *clientv3.Config) (*Cli, error) {
 	}
 
 	var err error
-	cli.discovery, err = etcd.NewDiscovery(time.Second*5, *etcdCfg)
+	cli.discovery, err = etcd.NewDiscovery(rpc.GetDiscoverNamePrefix(cluster), time.Second*5, *etcdCfg)
 	if err != nil {
 		return nil, err
 	}

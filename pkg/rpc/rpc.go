@@ -1,5 +1,10 @@
 package rpc
 
 const (
-	GrpcResolveSchema = "bucketmq_"
+	GrpcResolveSchema  = "bucketmq"
+	DiscoverNamePrefix = "bucketmq_"
 )
+
+func GetDiscoverNamePrefix(cluster string) string {
+	return DiscoverNamePrefix + cluster + "_"
+}

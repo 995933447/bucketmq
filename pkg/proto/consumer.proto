@@ -23,3 +23,7 @@ message PingReq {
 
 message PingResp {
 }
+
+message Node {
+    string node_grp = 1;
+}

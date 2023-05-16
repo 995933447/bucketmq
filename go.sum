@@ -12,6 +12,8 @@ github.com/995933447/microgosuit v0.0.0-20230510065437-cba346feb94c h1:ikd/5hQ6j
 github.com/995933447/microgosuit v0.0.0-20230510065437-cba346feb94c/go.mod h1:30PIj/2wXz+Fmaym9GXBrB9l6Nbk7aVLsCOcI/hKeqk=
 github.com/995933447/microgosuit v0.0.0-20230516095442-abb665525bd1 h1:ynvcF8++aQUajFue0Nb6zABNZfyqD++2Tr2ppWl/QuU=
 github.com/995933447/microgosuit v0.0.0-20230516095442-abb665525bd1/go.mod h1:mDce3450DpBztWRi+hvq+HK4XOtyFbISz7pKohWS+5M=
+github.com/995933447/microgosuit v0.0.0-20230516123906-5626fc3e8bff h1:W00ow/F36DQc4P5OJEWnvSQx0OuSydtNNoRHk6/r+xY=
+github.com/995933447/microgosuit v0.0.0-20230516123906-5626fc3e8bff/go.mod h1:mDce3450DpBztWRi+hvq+HK4XOtyFbISz7pKohWS+5M=
 github.com/995933447/runtimeutil v0.0.0-20230427124214-00d5b30c3fd6 h1:LcqGvldZ2jZ5f5b8ASMdwycQfAUPWnfaOj4TXxaZEXE=
 github.com/995933447/runtimeutil v0.0.0-20230427124214-00d5b30c3fd6/go.mod h1:Yag71VUobvmLPbIxwn5Qpx0ZEj5tW3ZuqWCs+8PUh/4=
 github.com/995933447/simpletrace v0.0.0-20230217061256-c25a914bd376 h1:hIHav2TTYiAGn87d9CGiuuty5cT/YBOb5Uxs52FoDgs=
