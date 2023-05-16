@@ -2,7 +2,7 @@ syntax = "proto3";
 
 package rpc;
 
-service BucketMq {
+service Broker {
     rpc RegTopic(RegTopicReq) returns (RegTopicResp) {}
 
     rpc RegSubscriber(RegSubscriberReq) returns (RegSubscriberResp) {}

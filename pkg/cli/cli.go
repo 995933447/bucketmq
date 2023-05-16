@@ -26,7 +26,7 @@ func NewCli(cluster string, etcdCfg *clientv3.Config) (*Cli, error) {
 		return nil, err
 	}
 
-	cli.BucketMqClient = rpc.NewBucketMqClient(conn)
+	cli.BrokerClient = rpc.NewBrokerClient(conn)
 
 	return cli, nil
 }
@@ -34,7 +34,7 @@ func NewCli(cluster string, etcdCfg *clientv3.Config) (*Cli, error) {
 type Cli struct {
 	discovery discovery.Discovery
 	consumers map[string]*Consumer
-	rpc.BucketMqClient
+	rpc.BrokerClient
 }
 
 func (c *Cli) InitConsumer(name, host string, port int) (*Consumer, error) {
