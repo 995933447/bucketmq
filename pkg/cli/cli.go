@@ -1,7 +1,8 @@
 package cli
 
 import (
-	"github.com/995933447/bucketmq/pkg/rpc"
+	"github.com/995933447/bucketmq/pkg/api/broker"
+	"github.com/995933447/bucketmq/pkg/discover"
 	"github.com/995933447/microgosuit/discovery"
 	"github.com/995933447/microgosuit/discovery/impl/etcd"
 	"github.com/995933447/microgosuit/grpcsuit"
@@ -10,23 +11,23 @@ import (
 	"time"
 )
 
-func NewCli(cluster string, etcdCfg *clientv3.Config) (*Cli, error) {
+func NewBucketMQ(cluster string, etcdCfg *clientv3.Config) (*Cli, error) {
 	cli := &Cli{
 		consumers: map[string]*Consumer{},
 	}
 
 	var err error
-	cli.discovery, err = etcd.NewDiscovery(rpc.GetDiscoverNamePrefix(cluster), time.Second*5, *etcdCfg)
+	cli.discovery, err = etcd.NewDiscovery(discover.GetDiscoverNamePrefix(cluster), time.Second*5, *etcdCfg)
 	if err != nil {
 		return nil, err
 	}
 
-	conn, err := grpc.Dial(rpc.GrpcResolveSchema+":///"+cluster, grpcsuit.RoundRobinDialOpts...)
+	conn, err := grpc.Dial(discover.GetGrpcResolveSchema(cluster)+":///"+discover.SrvNameBroker, grpcsuit.RoundRobinDialOpts...)
 	if err != nil {
 		return nil, err
 	}
 
-	cli.BrokerClient = rpc.NewBrokerClient(conn)
+	cli.BrokerClient = broker.NewBrokerClient(conn)
 
 	return cli, nil
 }
@@ -34,16 +35,16 @@ func NewCli(cluster string, etcdCfg *clientv3.Config) (*Cli, error) {
 type Cli struct {
 	discovery discovery.Discovery
 	consumers map[string]*Consumer
-	rpc.BrokerClient
+	broker.BrokerClient
 }
 
-func (c *Cli) InitConsumer(name, host string, port int) (*Consumer, error) {
+func (c *Cli) AddConsumer(name, host string, port int) (*Consumer, error) {
 	consumer := &Consumer{
-		cli:         c,
-		name:        name,
-		host:        host,
-		port:        port,
-		subscribers: map[string]map[string]*subscriber{},
+		cli:   c,
+		name:  name,
+		host:  host,
+		port:  port,
+		procs: map[string]map[string]*proc{},
 	}
 
 	c.consumers[name] = consumer

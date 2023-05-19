@@ -3,7 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
-	"github.com/995933447/bucketmq/pkg/rpc"
+	"github.com/995933447/bucketmq/pkg/api/consumer"
 	"github.com/995933447/microgosuit/discovery"
 	"github.com/995933447/microgosuit/discovery/util"
 	"github.com/995933447/microgosuit/grpcsuit"
@@ -81,7 +81,7 @@ func (w *worker) consume(msg *FileMsg) error {
 
 	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(w.Subscriber.maxConsumeMs)*time.Millisecond)
 	defer cancel()
-	_, err = rpc.NewConsumerClient(conn).Consume(ctx, &rpc.ConsumeReq{
+	_, err = consumer.NewConsumerClient(conn).Consume(ctx, &consumer.ConsumeReq{
 		Topic:      w.topic,
 		Subscriber: w.Subscriber.name,
 		Data:       msg.data,

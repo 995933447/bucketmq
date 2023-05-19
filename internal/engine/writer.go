@@ -10,12 +10,12 @@ import (
 )
 
 type Msg struct {
-	topic      string
-	priority   uint8
-	delaySec   uint32
-	retryCnt   uint32
-	bucketId   uint32
-	buf        []byte
+	Topic      string
+	Priority   uint8
+	DelayMs    uint32
+	RetryCnt   uint32
+	BucketId   uint32
+	Buf        []byte
 	compressed []byte
 	*WriteMsgResWait
 }
@@ -109,13 +109,13 @@ func (w *Writer) loop() {
 func (w *Writer) doWriteMost(msgList []*Msg) error {
 	var total int
 	for _, msg := range msgList {
-		total += len(msg.buf)
+		total += len(msg.Buf)
 	}
 	for {
 		select {
 		case more := <-w.msgChan:
 			msgList = append(msgList, more)
-			total += len(more.buf)
+			total += len(more.Buf)
 			if total >= 2*1024*1024 {
 				goto doWrite
 			}
@@ -126,6 +126,9 @@ func (w *Writer) doWriteMost(msgList []*Msg) error {
 doWrite:
 	if err := w.doWrite(msgList); err != nil {
 		for _, msg := range msgList {
+			if msg.WriteMsgResWait == nil {
+				continue
+			}
 			if msg.IsFinished {
 				continue
 			}
@@ -158,11 +161,8 @@ func (w *Writer) doWrite(msgList []*Msg) error {
 	return nil
 }
 
-func (w *Writer) Write(topic string, buf []byte) {
-	w.msgChan <- &Msg{
-		topic: topic,
-		buf:   buf,
-	}
+func (w *Writer) Write(msg *Msg) {
+	w.msgChan <- msg
 }
 
 func (w *Writer) Flush() {

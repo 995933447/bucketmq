@@ -133,10 +133,10 @@ func (o *output) write(msgList []*Msg) error {
 		for _, msg = range msgList {
 			var incrementBytes uint32
 			if enabledCompress {
-				msg.compressed = snappy.Encode(nil, msg.buf)
+				msg.compressed = snappy.Encode(nil, msg.Buf)
 				incrementBytes = uint32(len(msg.compressed))
 			} else {
-				incrementBytes = uint32(len(msg.buf))
+				incrementBytes = uint32(len(msg.Buf))
 			}
 
 			incrementBytes += bufBoundariesBytes
@@ -185,7 +185,7 @@ func (o *output) write(msgList []*Msg) error {
 
 			var buf []byte
 			if !enabledCompress {
-				buf = msg.buf
+				buf = msg.Buf
 			} else {
 				buf = msg.compressed
 			}
@@ -204,10 +204,10 @@ func (o *output) write(msgList []*Msg) error {
 			bin.PutUint32(idxBuf[4:8], dataBufOffset)             // offset
 			bin.PutUint32(idxBuf[8:12], uint32(dataItemBufBytes)) // size
 			idxBuf[12] = compressedFlagInIdx
-			idxBuf[13] = msg.priority
-			bin.PutUint32(idxBuf[14:18], msg.bucketId)
-			bin.PutUint32(idxBuf[18:22], msg.delaySec)
-			bin.PutUint32(idxBuf[22:26], msg.retryCnt)
+			idxBuf[13] = msg.Priority
+			bin.PutUint32(idxBuf[14:18], msg.BucketId)
+			bin.PutUint32(idxBuf[18:22], msg.DelayMs)
+			bin.PutUint32(idxBuf[22:26], msg.RetryCnt)
 			bin.PutUint64(idxBuf[26:34], o.curMaxMsgId+uint64(i+1))
 			bin.PutUint16(idxBuf[34:], bufBoundaryEnd)
 			idxBuf = idxBuf[34+bufBoundaryBytes:]

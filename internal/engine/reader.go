@@ -16,7 +16,7 @@ type FileMsg struct {
 	retryAt           uint32
 	retriedCnt        uint32
 	maxRetryCnt       uint32
-	delaySec          uint32
+	delayMs           uint32
 	bucketId          uint32
 	seq               uint64
 	offset            uint32
@@ -182,7 +182,7 @@ func (r *reader) loadMsgIdxes() error {
 				isCompressedFlag := idxBuf[bufBoundaryBytes+12]
 				priority := idxBuf[bufBoundaryBytes+13]
 				bucketId := bin.Uint32(idxBuf[bufBoundaryBytes+14 : bufBoundaryBytes+18])
-				delaySec := bin.Uint32(idxBuf[bufBoundaryBytes+18 : bufBoundaryBytes+22])
+				delayMs := bin.Uint32(idxBuf[bufBoundaryBytes+18 : bufBoundaryBytes+22])
 				retryCnt := bin.Uint32(idxBuf[bufBoundaryBytes+22 : bufBoundaryBytes+26])
 
 				item := &FileMsg{
@@ -193,7 +193,7 @@ func (r *reader) loadMsgIdxes() error {
 					offset:      r.nextIdxCursor,
 					priority:    priority,
 					bucketId:    bucketId,
-					delaySec:    delaySec,
+					delayMs:     delayMs,
 					maxRetryCnt: retryCnt,
 					msgId:       msgId,
 				}

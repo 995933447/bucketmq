@@ -243,7 +243,7 @@ func (c *delayMsgQueueItemComparable) Compare(_, _ interface{}) int {
 }
 
 func (c *delayMsgQueueItemComparable) CalcScore(key interface{}) float64 {
-	return float64(key.(*FileMsg).delaySec) + float64(time.Now().Unix())
+	return float64(key.(*FileMsg).delayMs) + float64(time.Now().Unix())
 }
 
 // 迁移到期消息,按到期时间降序排序
@@ -254,12 +254,12 @@ func (q *delayMsgQueue) migrateExpired() []*FileMsg {
 		now      = uint32(time.Now().Unix())
 	)
 
-	// 伪造一个当下下一秒过期的消息项
-	expireAtNextSecFake := &FileMsg{
-		delaySec: uint32(time.Now().Unix()),
+	// 伪造一个当下下一毫秒过期的消息项
+	expireAtNextMsFake := &FileMsg{
+		delayMs: uint32(time.Now().UnixMilli()),
 	}
 	// 找出离当下最近的未来过期的或者已经过期的消息项
-	found := skipList.Find(expireAtNextSecFake)
+	found := skipList.Find(expireAtNextMsFake)
 	if found == nil {
 		found = skipList.Back()
 	}
@@ -307,7 +307,7 @@ type queue struct {
 }
 
 func (q *queue) push(msg *FileMsg, isFirstEnqueue bool) {
-	if isFirstEnqueue && msg.delaySec > 0 {
+	if isFirstEnqueue && msg.delayMs > 0 {
 		q.delayMsgQueue.push(msg)
 		return
 	}

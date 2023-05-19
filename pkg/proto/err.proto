@@ -1,0 +1,18 @@
+syntax = "proto3";
+
+package err;
+option go_package = "github.com/995933447/bucketmq/pkg/api/errs";
+
+enum ErrCode {
+    ErrCodeNil = 0;
+    ErrCodeArgumentInvalid = 400;
+    ErrCodeInternal = 500;
+
+    ErrCodeNotNodeGrpAvailable = 1001;
+    ErrCodeTopicNotFound = 1002;
+}
+
+message RPCError {
+    err.ErrCode code = 1;
+    string msg = 2;
+}

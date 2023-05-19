@@ -1,11 +1,10 @@
 syntax = "proto3";
 
-package rpc;
+package conumer;
+option go_package = "github.com/995933447/bucketmq/pkg/api/consumer";
 
 service Consumer {
     rpc Consume(ConsumeReq) returns (ConsumeResp) {}
-    
-    rpc Ping(PingReq) returns (PingResp) {}
 }
 
 message ConsumeReq {
@@ -18,12 +17,11 @@ message ConsumeReq {
 message ConsumeResp {
 }
 
-message PingReq {
+message ConnSNSrvReq {
+    string sn = 1;
+    string consumer = 2;
 }
 
-message PingResp {
-}
-
-message Node {
-    string node_grp = 1;
+message ConnSNSrvResp {
+    string sn = 1;
 }

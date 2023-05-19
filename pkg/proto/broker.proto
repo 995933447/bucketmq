@@ -1,11 +1,14 @@
 syntax = "proto3";
 
-package rpc;
+package broker;
+option go_package = "github.com/995933447/bucketmq/pkg/api/broker";
 
 service Broker {
     rpc RegTopic(RegTopicReq) returns (RegTopicResp) {}
 
     rpc RegSubscriber(RegSubscriberReq) returns (RegSubscriberResp) {}
+
+    rpc Pub(PubReq) returns (PubResp) {}
 }
 
 message Topic {
@@ -44,4 +47,21 @@ message RegSubscriberResp {
 
 message GetTopicReq {
     string topic = 1;
+}
+
+message PubReq {
+    string topic = 1;
+    bytes msg = 2;
+    uint32 priority = 3;
+    uint32 delay_ms = 4;
+    uint32 retry_cnt = 5;
+    uint32 bucket_id = 6;
+}
+
+message PubResp {
+}
+
+message Node {
+    string node_grp = 1;
+    bool is_master = 2;
 }

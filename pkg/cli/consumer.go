@@ -4,7 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"github.com/995933447/bucketmq/pkg/rpc"
+	"github.com/995933447/bucketmq/pkg/api/consumer"
+	"github.com/995933447/bucketmq/pkg/api/health"
+	"github.com/995933447/gonetutil"
 	"github.com/995933447/microgosuit/discovery"
 	"google.golang.org/grpc"
 	"net"
@@ -12,68 +14,64 @@ import (
 	"sync"
 )
 
-type ConsumerProcFunc func(ctx context.Context, req *rpc.ConsumeReq, data interface{}) (*rpc.ConsumeResp, error)
+type ConsumerProcFunc func(ctx context.Context, req *consumer.ConsumeReq, data interface{}) (*consumer.ConsumeResp, error)
 
-var _ rpc.ConsumerServer = (*Consumer)(nil)
+var (
+	_ consumer.ConsumerServer     = (*Consumer)(nil)
+	_ health.HealthReporterServer = (*Consumer)(nil)
+)
 
-type subscriber struct {
-	proc    ConsumerProcFunc
+type proc struct {
+	handler ConsumerProcFunc
 	msgType reflect.Type
 }
 
 type Consumer struct {
-	cli         *Cli
-	name        string
-	host        string
-	port        int
-	opProcMu    sync.RWMutex
-	subscribers map[string]map[string]*subscriber
+	cli      *Cli
+	name     string
+	host     string
+	port     int
+	opProcMu sync.RWMutex
+	procs    map[string]map[string]*proc
 }
 
-func (c *Consumer) Ping(ctx context.Context, req *rpc.PingReq) (*rpc.PingResp, error) {
-	return &rpc.PingResp{}, nil
+func (c *Consumer) Ping(_ context.Context, _ *health.PingReq) (*health.PingResp, error) {
+	return &health.PingResp{}, nil
 }
 
-func (c *Consumer) Consume(ctx context.Context, req *rpc.ConsumeReq) (*rpc.ConsumeResp, error) {
-	var resp rpc.ConsumeResp
-	subscribers, ok := c.subscribers[req.Topic]
+func (c *Consumer) Consume(ctx context.Context, req *consumer.ConsumeReq) (*consumer.ConsumeResp, error) {
+	var resp consumer.ConsumeResp
+	procs, ok := c.procs[req.Topic]
 	if !ok {
 		return &resp, nil
 	}
 
-	subscriber, ok := subscribers[req.Subscriber]
+	proc, ok := procs[req.Subscriber]
 	if !ok {
 		return &resp, nil
 	}
 
-	data := reflect.New(subscriber.msgType).Interface()
+	data := reflect.New(proc.msgType).Interface()
 	err := json.Unmarshal(req.Data, data)
 	if err != nil {
 		return nil, err
 	}
 
-	return subscriber.proc(ctx, req, data)
+	return proc.handler(ctx, req, data)
 }
 
-func (c *Consumer) Subscribe(cfg *rpc.Subscriber, msg interface{}, procFunc ConsumerProcFunc) error {
+func (c *Consumer) Proc(topic, subscriber string, msg interface{}, procFunc ConsumerProcFunc) error {
 	c.opProcMu.Lock()
 	defer c.opProcMu.Unlock()
 
-	_, err := c.cli.RegSubscriber(context.Background(), &rpc.RegSubscriberReq{
-		Subscriber: cfg,
-	})
-	if err != nil {
-		return err
-	}
-
-	subscribers, ok := c.subscribers[cfg.Topic]
+	procs, ok := c.procs[topic]
 	if !ok {
-		subscribers = map[string]*subscriber{}
-		c.subscribers[cfg.Topic] = subscribers
+		procs = map[string]*proc{}
+		c.procs[topic] = procs
 	}
 
-	subscribers[cfg.Subscriber] = &subscriber{
-		proc:    procFunc,
+	procs[subscriber] = &proc{
+		handler: procFunc,
 		msgType: reflect.TypeOf(msg),
 	}
 
@@ -81,7 +79,12 @@ func (c *Consumer) Subscribe(cfg *rpc.Subscriber, msg interface{}, procFunc Cons
 }
 
 func (c *Consumer) Start() error {
-	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", c.host, c.port))
+	host, err := gonetutil.EvalVarToParseIp(c.host)
+	if err != nil {
+		return err
+	}
+
+	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, c.port))
 	if err != nil {
 		return err
 	}
@@ -93,7 +96,7 @@ func (c *Consumer) Start() error {
 	}
 
 	grpcServer := grpc.NewServer()
-	rpc.RegisterConsumerServer(grpcServer, c)
+	consumer.RegisterConsumerServer(grpcServer, c)
 
 	defer func() {
 		_ = c.cli.discovery.Unregister(context.Background(), c.name, node, true)

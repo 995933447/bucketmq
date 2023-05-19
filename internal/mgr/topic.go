@@ -11,8 +11,6 @@ import (
 	"github.com/995933447/microgosuit/discovery"
 	"github.com/995933447/runtimeutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
-	"sync"
-	"time"
 )
 
 const (
@@ -21,7 +19,7 @@ const (
 )
 
 var (
-	ErrTopicNotFound          = errors.New("topic conf not found")
+	ErrTopicNotFound          = errors.New("topic not found")
 	ErrTopicBoundOtherNodeGrp = errors.New("topic bound other node group")
 )
 
@@ -45,44 +43,6 @@ type SubscriberCfg struct {
 	MaxConsumeMs                 uint32
 }
 
-var (
-	topicMgr       *TopicMgr
-	initTopicMgrMu sync.RWMutex
-)
-
-func InitTopicMgr(discover discovery.Discovery) error {
-	initTopicMgrMu.RLock()
-	if topicMgr != nil {
-		initTopicMgrMu.RUnlock()
-		return nil
-	}
-	initTopicMgrMu.RUnlock()
-
-	initTopicMgrMu.Lock()
-	defer initTopicMgrMu.Unlock()
-
-	if topicMgr != nil {
-		return nil
-	}
-
-	sysCfg := syscfg.MustCfg()
-
-	etcdCli, err := clientv3.New(clientv3.Config{
-		Endpoints:   sysCfg.Etcd.Endpoints,
-		DialTimeout: time.Duration(sysCfg.Etcd.ConnectTimeoutMs) * time.Millisecond,
-	})
-	if err != nil {
-		return err
-	}
-
-	topicMgr, err = NewTopicMgr(etcdCli, discover)
-	if err != nil {
-		return err
-	}
-
-	return nil
-}
-
 type topic struct {
 	name            string
 	writer          *engine.Writer
@@ -97,9 +57,9 @@ func (t *topic) close() {
 	}
 }
 
-func NewTopicMgr(etcdCli *clientv3.Client, discover discovery.Discovery) (*TopicMgr, error) {
+func NewTopicMgr(etcdCli *clientv3.Client, disc discovery.Discovery) (*TopicMgr, error) {
 	mgr := &TopicMgr{
-		Discovery: discover,
+		Discovery: disc,
 		topics:    map[string]*topic{},
 		etcdCli:   etcdCli,
 	}
@@ -408,6 +368,28 @@ func (m *TopicMgr) UnRegSubscriber(cfg *SubscriberCfg) error {
 
 	if _, err := m.etcdCli.Delete(context.Background(), m.subscriberToEtcdKey(cfg.Topic, cfg.Name)); err != nil {
 		return err
+	}
+
+	return nil
+}
+
+func (m *TopicMgr) Pub(topic string, msg *engine.Msg) error {
+	t, ok := m.topics[topic]
+	if !ok {
+		return ErrTopicNotFound
+	}
+
+	if msg.WriteMsgResWait != nil {
+		msg.WriteMsgResWait.Wg.Add(1)
+	}
+
+	t.writer.Write(msg)
+
+	if msg.WriteMsgResWait != nil {
+		msg.WriteMsgResWait.Wg.Wait()
+		if msg.WriteMsgResWait.Err != nil {
+			return msg.WriteMsgResWait.Err
+		}
 	}
 
 	return nil

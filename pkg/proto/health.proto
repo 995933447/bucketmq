@@ -1,0 +1,14 @@
+syntax = "proto3";
+
+package health;
+option go_package = "github.com/995933447/bucketmq/pkg/api/health";
+
+service HealthReporter {
+  rpc Ping(PingReq) returns (PingResp) {}
+}
+
+message PingReq {
+}
+
+message PingResp {
+}

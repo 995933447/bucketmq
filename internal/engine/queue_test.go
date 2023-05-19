@@ -114,19 +114,19 @@ func TestBucket(t *testing.T) {
 func TestDelayMsgQueue(t *testing.T) {
 	delayQ := newDelayMsgQueue()
 	delayQ.push(&FileMsg{
-		delaySec: 10,
+		delayMs:  10,
 		bucketId: 1,
 	})
 	delayQ.push(&FileMsg{
-		delaySec: 2,
+		delayMs:  2,
 		bucketId: 2,
 	})
 	delayQ.push(&FileMsg{
-		delaySec: 1,
+		delayMs:  1,
 		bucketId: 3,
 	})
 	delayQ.push(&FileMsg{
-		delaySec: 1,
+		delayMs:  1,
 		bucketId: 2,
 	})
 	time.Sleep(time.Second * 3)
@@ -138,7 +138,7 @@ func TestDelayMsgQueue(t *testing.T) {
 func TestQueue(t *testing.T) {
 	q := newQueue(MsgWeightPriority, true)
 	q.push(&FileMsg{
-		delaySec: 1,
+		delayMs:  1,
 		bucketId: 3,
 	}, true)
 
@@ -172,19 +172,19 @@ func TestQueue(t *testing.T) {
 	t.Logf("%+v", q.pop(nil))
 
 	q.push(&FileMsg{
-		delaySec: 10,
+		delayMs:  10,
 		bucketId: 1,
 	}, true)
 	q.push(&FileMsg{
-		delaySec: 2,
+		delayMs:  2,
 		bucketId: 2,
 	}, true)
 	q.push(&FileMsg{
-		delaySec: 1,
+		delayMs:  1,
 		bucketId: 3,
 	}, true)
 	q.push(&FileMsg{
-		delaySec: 1,
+		delayMs:  1,
 		bucketId: 2,
 	}, true)
 	q.migrateExpired()

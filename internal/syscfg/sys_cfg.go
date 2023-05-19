@@ -2,6 +2,7 @@ package syscfg
 
 import (
 	"github.com/995933447/confloader"
+	"github.com/gzjjyz/micro/env"
 	"sync"
 	"time"
 )
@@ -12,7 +13,7 @@ type EtcdCfg struct {
 }
 
 type Cfg struct {
-	Etcd              *EtcdCfg
+	*env.Meta
 	DataDir           string
 	NodeGrp           string
 	Cluster           string
@@ -48,6 +49,12 @@ func Init(cfgFilePath string) error {
 	if err = cfgLoader.Load(); err != nil {
 		return err
 	}
+
+	if err = env.InitMeta(cfgFilePath); err != nil {
+		return err
+	}
+
+	cfg.Meta = env.MustMeta()
 
 	return nil
 }
