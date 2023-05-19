@@ -8,7 +8,7 @@ import (
 	"github.com/995933447/bucketmq/internal/server/grpc/middleware"
 	"github.com/995933447/bucketmq/internal/syscfg"
 	"github.com/995933447/bucketmq/internal/util"
-	"github.com/995933447/bucketmq/pkg/api/broker"
+	"github.com/995933447/bucketmq/pkg/rpc/broker"
 	"github.com/995933447/bucketmq/pkg/discover"
 	"github.com/995933447/gonetutil"
 	"github.com/995933447/microgosuit"

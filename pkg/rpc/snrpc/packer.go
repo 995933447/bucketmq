@@ -3,12 +3,12 @@ package snrpc
 import (
 	"encoding/binary"
 	"errors"
-	"github.com/995933447/bucketmq/pkg/api/errs"
+	"github.com/995933447/bucketmq/pkg/rpc/errs"
 	"github.com/golang/protobuf/proto"
 )
 
-// HeaderLen begin boundary(2) + data len(4) + proto id (4) + serial no(16) + is error(1) + end boundary(2)
-const HeaderLen = 29
+// HeaderLen begin boundary(2) + data len(4) + proto id (4) + req serial no(16) + error flag(1) + request flag(1) + end boundary(2)
+const HeaderLen = 30
 const HeaderBegin = 0x12
 const HeaderEnd = 0x34
 
@@ -19,6 +19,7 @@ type Msg struct {
 	SN      string
 	Data    []byte
 	Err     *errs.RPCError
+	IsReq   bool
 }
 
 func Unpack(buf []byte) (completeMsgList []*Msg, incompleteBuf []byte, err error) {
@@ -51,6 +52,9 @@ func Unpack(buf []byte) (completeMsgList []*Msg, incompleteBuf []byte, err error
 			}
 			msg.Err = &rpcErr
 		}
+		if buf[27] == 1 {
+			msg.IsReq = true
+		}
 		completeMsgList = append(completeMsgList, &msg)
 
 		buf = buf[HeaderLen+dataLen:]
@@ -61,7 +65,7 @@ func Unpack(buf []byte) (completeMsgList []*Msg, incompleteBuf []byte, err error
 	return
 }
 
-func Pack(protoId uint32, SN string, data proto.Message) ([]byte, error) {
+func Pack(protoId uint32, SN string, isReq bool, data proto.Message) ([]byte, error) {
 	buf, err := proto.Marshal(data)
 	if err != nil {
 		return nil, err
@@ -80,7 +84,17 @@ func Pack(protoId uint32, SN string, data proto.Message) ([]byte, error) {
 			break
 		}
 	}
-	binary.LittleEndian.PutUint16(buf[26:28], HeaderEnd)
+	var isErrMsgFlag uint8
+	if _, ok := data.(*errs.RPCError); ok {
+		isErrMsgFlag = 1
+	}
+	buf[26] = isErrMsgFlag
+	var isReqMsgFlag uint8
+	if isReq {
+		isReqMsgFlag = 1
+	}
+	buf[27] = isReqMsgFlag
+	binary.LittleEndian.PutUint16(buf[28:30], HeaderEnd)
 
 	return buf, nil
 }

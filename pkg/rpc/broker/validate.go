@@ -1,11 +1,11 @@
 package broker
 
 import (
-	"github.com/995933447/bucketmq/pkg/api"
-	"github.com/995933447/bucketmq/pkg/api/errs"
+	"github.com/995933447/bucketmq/pkg/rpc"
+	"github.com/995933447/bucketmq/pkg/rpc/errs"
 )
 
-var _ api.Validator = (*RegTopicReq)(nil)
+var _ rpc.Validator = (*RegTopicReq)(nil)
 
 func (m *RegTopicReq) Validate() *errs.RPCError {
 	if m.Topic == nil {
@@ -19,7 +19,7 @@ func (m *RegTopicReq) Validate() *errs.RPCError {
 	return nil
 }
 
-var _ api.Validator = (*RegTopicReq)(nil)
+var _ rpc.Validator = (*RegTopicReq)(nil)
 
 func (m *RegSubscriberReq) Validate() *errs.RPCError {
 	if m.Subscriber == nil {

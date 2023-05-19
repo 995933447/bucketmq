@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"github.com/995933447/bucketmq/pkg/api/broker"
+	"github.com/995933447/bucketmq/pkg/rpc/broker"
 	"github.com/995933447/bucketmq/pkg/discover"
 	"github.com/995933447/microgosuit/discovery"
 	"github.com/995933447/microgosuit/discovery/impl/etcd"

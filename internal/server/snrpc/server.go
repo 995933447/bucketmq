@@ -1,10 +1,11 @@
 package snrpc
 
 import (
+	"errors"
 	"fmt"
 	"github.com/995933447/bucketmq/internal/util"
-	"github.com/995933447/bucketmq/pkg/api/errs"
-	"github.com/995933447/bucketmq/pkg/api/snrpc"
+	"github.com/995933447/bucketmq/pkg/rpc/errs"
+	"github.com/995933447/bucketmq/pkg/rpc/snrpc"
 	"github.com/995933447/gonetutil"
 	"github.com/golang/protobuf/proto"
 	"io"
@@ -14,6 +15,9 @@ import (
 	"sync/atomic"
 	"time"
 )
+
+var ErrCallbackReqTimeout = errors.New("callback request timeout")
+var ErrServerExited = errors.New("server exited")
 
 func NewMsgHandler(protoId uint32, msg interface{}, handleFunc HandleMsgFunc) *MsgHandler {
 	handler := &MsgHandler{
@@ -32,20 +36,80 @@ type MsgHandler struct {
 
 type HandleMsgFunc func(conn net.Conn, sn string, msg proto.Message) (proto.Message, error)
 
-type Server struct {
-	host                string
-	port                int
-	sNCtx               sync.Map
-	maxConnNum          uint32
-	listener            net.Listener
-	exitCh              chan struct{}
-	exited              atomic.Bool
-	conns               []net.Conn
-	connCachedBuf       map[net.Conn][]byte
-	protoIdToHandlerMap map[uint32]*MsgHandler
+type callbackResp struct {
+	err  *errs.RPCError
+	data []byte
 }
 
-func (s *Server) RegHandler(protoId uint32, msg, msgFunc HandleMsgFunc) {
+type callbackCtx struct {
+	respCh  chan *callbackResp
+}
+
+type Server struct {
+	host                        string
+	port                		int
+	sNToCallbackCtxMap          sync.Map
+	maxConnNum          		uint32
+	listener            		net.Listener
+	exitCh              		chan struct{}
+	exited              		atomic.Bool
+	conns               		map[net.Conn]struct{}
+	opConnsMu					sync.RWMutex
+	connCachedBuf       		map[net.Conn][]byte
+	protoIdToHandlerMap 		map[uint32]*MsgHandler
+}
+
+func (s *Server) CloseConn(conn net.Conn) {
+	s.opConnsMu.Lock()
+	defer s.opConnsMu.Unlock()
+	delete(s.conns, conn)
+	_= conn.Close()
+}
+
+func (s *Server) Callback(conn net.Conn, timeout time.Duration, protoId uint32, req proto.Message, resp proto.Message) error {
+	sN := snrpc.GenSN()
+	buf, err := snrpc.Pack(protoId, sN, true, req)
+	if err != nil {
+		return err
+	}
+
+	respCh := make(chan *callbackResp)
+	s.sNToCallbackCtxMap.Store(sN, &callbackCtx{
+		respCh: respCh,
+	})
+
+	if err = s.write(conn, buf); err != nil {
+		s.sNToCallbackCtxMap.Delete(sN)
+		return err
+	}
+
+	timeoutTimer := time.NewTimer(timeout)
+	defer timeoutTimer.Stop()
+	select {
+	case <-s.exitCh:
+	default:
+		if s.exited.Load() {
+			return ErrServerExited
+		}
+		select {
+		case <- s.exitCh:
+			return ErrServerExited
+		case <-timeoutTimer.C:
+			return ErrCallbackReqTimeout
+		case respWrap := <-respCh:
+			if respWrap.err != nil {
+				return err
+			}
+			if err = proto.Unmarshal(respWrap.data, resp); err != nil {
+				return err
+			}
+		}
+	}
+
+	return nil
+}
+
+func (s *Server) RegProto(protoId uint32, msg, msgFunc HandleMsgFunc) {
 	s.protoIdToHandlerMap[protoId] = &MsgHandler{
 		protoId:    protoId,
 		msgType:    reflect.TypeOf(msg),
@@ -66,6 +130,10 @@ func (s *Server) Serve() error {
 
 	var tempDelay time.Duration // how long to sleep on accept failure
 	for {
+		if s.exited.Load() {
+			goto out
+		}
+
 		conn, err := s.listener.Accept()
 		if err != nil {
 			if ne, ok := err.(interface {
@@ -85,8 +153,7 @@ func (s *Server) Serve() error {
 				case <-timer.C:
 				case <-s.exitCh:
 					timer.Stop()
-					s.exited.Store(true)
-					return nil
+					goto out
 				}
 				continue
 			}
@@ -95,20 +162,51 @@ func (s *Server) Serve() error {
 			continue
 		}
 
+		s.opConnsMu.RLock()
 		if s.maxConnNum < uint32(len(s.conns)) {
+			s.opConnsMu.RUnlock()
 			continue
 		}
+		s.opConnsMu.RUnlock()
 
-		s.conns = append(s.conns, conn)
+		s.opConnsMu.Lock()
+		s.conns[conn] = struct{}{}
+		s.opConnsMu.Unlock()
 
-		go s.readAndHandle(conn)
+		go s.readAndProc(conn)
 
 		tempDelay = 0
 	}
+
+out:
+	for conn := range s.conns {
+		s.CloseConn(conn)
+	}
+	return nil
 }
 
-func (s *Server) readAndHandle(conn net.Conn) {
+func (s *Server) Exit() error {
+	if err := s.listener.Close(); err != nil {
+		return err
+	}
+	s.exited.Store(true)
 	for {
+		select {
+		case s.exitCh <- struct{}{}:
+		default:
+			goto out
+		}
+	}
+out:
+	return nil
+}
+
+func (s *Server) readAndProc(conn net.Conn) {
+	for {
+		if s.exited.Load() {
+			break
+		}
+
 		msgList, err := s.read(conn)
 		if err != nil {
 			util.Logger.Error(nil, err)
@@ -122,6 +220,20 @@ func (s *Server) readAndHandle(conn net.Conn) {
 }
 
 func (s *Server) handleMsg(conn net.Conn, msg *snrpc.Msg) {
+	if !msg.IsReq {
+		callbackCtxt, ok := s.sNToCallbackCtxMap.Load(msg.SN)
+		if !ok {
+			return
+		}
+		var callbackRsp callbackResp
+		callbackRsp.data = msg.Data
+		if msg.Err != nil {
+			callbackRsp.err = msg.Err
+		}
+		callbackCtxt.(*callbackCtx).respCh <- &callbackRsp
+		return
+	}
+
 	handler, ok := s.protoIdToHandlerMap[msg.ProtoId]
 	if !ok {
 		util.Logger.Warnf(nil, "proto id %d not register handler", msg.ProtoId)
@@ -144,7 +256,7 @@ func (s *Server) handleMsg(conn net.Conn, msg *snrpc.Msg) {
 		resp = err.(*errs.RPCError)
 	}
 
-	buf, err := snrpc.Pack(msg.ProtoId, msg.SN, resp)
+	buf, err := snrpc.Pack(msg.ProtoId, msg.SN, false, resp)
 	if err != nil {
 		util.Logger.Error(nil, err)
 		return

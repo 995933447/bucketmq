@@ -6,7 +6,7 @@ package consumer // import "github.com/995933447/bucketmq/pkg/api/consumer"
 import proto "github.com/golang/protobuf/proto"
 import fmt "fmt"
 import math "math"
-import errs "github.com/995933447/bucketmq/pkg/api/errs"
+import errs "github.com/995933447/bucketmq/pkg/rpc/errs"
 
 import (
 	context "golang.org/x/net/context"

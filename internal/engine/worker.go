@@ -3,7 +3,7 @@ package engine
 import (
 	"context"
 	"fmt"
-	"github.com/995933447/bucketmq/pkg/api/consumer"
+	"github.com/995933447/bucketmq/pkg/rpc/consumer"
 	"github.com/995933447/microgosuit/discovery"
 	"github.com/995933447/microgosuit/discovery/util"
 	"github.com/995933447/microgosuit/grpcsuit"
