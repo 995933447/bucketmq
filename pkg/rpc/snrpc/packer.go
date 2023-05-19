@@ -7,8 +7,8 @@ import (
 	"github.com/golang/protobuf/proto"
 )
 
-// HeaderLen begin boundary(2) + data len(4) + proto id (4) + req serial no(16) + error flag(1) + request flag(1) + end boundary(2)
-const HeaderLen = 30
+// HeaderLen begin boundary(2) + data len(4) + proto id (4) + req serial no(36) + error flag(1) + request flag(1) + end boundary(2)
+const HeaderLen = 50
 const HeaderBegin = 0x12
 const HeaderEnd = 0x34
 
@@ -42,9 +42,9 @@ func Unpack(buf []byte) (completeMsgList []*Msg, incompleteBuf []byte, err error
 
 		var msg Msg
 		msg.ProtoId = binary.LittleEndian.Uint32(buf[6:10])
-		msg.SN = string(buf[10:26])
+		msg.SN = string(buf[10:46])
 		msg.Data = buf[HeaderLen:dataLen]
-		if buf[26] == 1 {
+		if buf[46] == 1 {
 			var rpcErr errs.RPCError
 			err = proto.Unmarshal(msg.Data, &rpcErr)
 			if err != nil {
@@ -52,7 +52,7 @@ func Unpack(buf []byte) (completeMsgList []*Msg, incompleteBuf []byte, err error
 			}
 			msg.Err = &rpcErr
 		}
-		if buf[27] == 1 {
+		if buf[47] == 1 {
 			msg.IsReq = true
 		}
 		completeMsgList = append(completeMsgList, &msg)
@@ -80,7 +80,7 @@ func Pack(protoId uint32, SN string, isReq bool, data proto.Message) ([]byte, er
 	binary.LittleEndian.PutUint32(buf[6:10], protoId)
 	for i, b := range []byte(SN) {
 		buf[10+i] = b
-		if i >= 15 {
+		if i >= 35 {
 			break
 		}
 	}
@@ -88,13 +88,13 @@ func Pack(protoId uint32, SN string, isReq bool, data proto.Message) ([]byte, er
 	if _, ok := data.(*errs.RPCError); ok {
 		isErrMsgFlag = 1
 	}
-	buf[26] = isErrMsgFlag
+	buf[36] = isErrMsgFlag
 	var isReqMsgFlag uint8
 	if isReq {
 		isReqMsgFlag = 1
 	}
-	buf[27] = isReqMsgFlag
-	binary.LittleEndian.PutUint16(buf[28:30], HeaderEnd)
+	buf[37] = isReqMsgFlag
+	binary.LittleEndian.PutUint16(buf[38:50], HeaderEnd)
 
 	return buf, nil
 }
