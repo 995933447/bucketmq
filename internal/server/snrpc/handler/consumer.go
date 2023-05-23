@@ -158,10 +158,10 @@ func (c *Consumer) Consume(consumer, topic, subscriber string, timeout time.Dura
 	return &resp, nil
 }
 
-func RegSNPRPCProto(handler *Consumer, srv *snrpc.Server) {
+func (c *Consumer) RegSNRPCProto(srv *snrpc.Server) {
 	srv.RegProto(uint32(snrpcx.SNRPCProto_SNRPCProtoConsumerConnect), &consumer.ConsumeReq{}, func(conn net.Conn, req proto.Message) (proto.Message, error) {
 		specReq := req.(*consumer.ConnSNSrvReq)
-		if err := handler.RegConsumer(conn, specReq); err != nil {
+		if err := c.RegConsumer(conn, specReq); err != nil {
 			return nil, err
 		}
 		return &consumer.ConsumeResp{}, nil

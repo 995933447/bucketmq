@@ -9,6 +9,7 @@ import (
 	"github.com/995933447/microgosuit/grpcsuit"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
+	"sync"
 	"time"
 )
 
@@ -34,22 +35,31 @@ func NewBucketMQ(cluster string, etcdCfg *clientv3.Config) (*Cli, error) {
 }
 
 type Cli struct {
-	discovery discovery.Discovery
-	consumers map[string]*Consumer
+	discovery     discovery.Discovery
+	consumers     map[string]*Consumer
+	opConsumersMu sync.RWMutex
 	broker.BrokerClient
 }
 
-func (c *Cli) AddConsumer(name string) (*Consumer, error) {
+func (c *Cli) RegConsumer(name string, onErr OnConsumerErr) (*Consumer, error) {
+	c.opConsumersMu.RLock()
 	if consumer, ok := c.consumers[name]; ok {
+		c.opConsumersMu.RUnlock()
+
+		consumer.onErr = onErr
 		return consumer, nil
 	}
+	c.opConsumersMu.RUnlock()
+
+	c.opConsumersMu.Lock()
+	defer c.opConsumersMu.Unlock()
 
 	consumer := &Consumer{
 		cli:                c,
 		name:               name,
+		onErr:              onErr,
 		topicToSNRPCCliMap: map[string]*snrpc.Cli{},
 	}
-
 	c.consumers[name] = consumer
 
 	return consumer, nil

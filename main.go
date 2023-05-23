@@ -22,11 +22,7 @@ import (
 )
 
 func main() {
-	var cfgFilePath string
-	cfgFilePath = *flag.String("c", "", "server config file path")
-	flag.Parse()
-
-	if err := syscfg.Init(cfgFilePath); err != nil {
+	if err := parseCmdToInitSysCfg(); err != nil {
 		panic(err)
 	}
 
@@ -44,13 +40,32 @@ func main() {
 	sysCfg := syscfg.MustCfg()
 
 	snrpcSrv, err := snrpc.NewServer(sysCfg.Host, sysCfg.Port, 1000)
-	consumerHandler := snrpchandler.NewConsumer(snrpcSrv, time.Second*5)
-	snrpchandler.RegSNPRPCProto(consumerHandler, snrpcSrv)
+	if err != nil {
+		panic(err)
+	}
+
+	consumerService := snrpchandler.NewConsumer(snrpcSrv, time.Second*5)
+	consumerService.RegSNRPCProto(snrpcSrv)
 	go func() {
 		if err := snrpcSrv.Serve(); err != nil {
 			panic(err)
 		}
 	}()
+
+	etcdCli, err := util.GetOrNewEtcdCli()
+	if err != nil {
+		panic(err)
+	}
+
+	topicMgr, err := mgr.NewTopicMgr(etcdCli, disc, func(topic, subscriber, consumer string, timeout time.Duration, msg *engine.FileMsg) error {
+		if _, err := consumerService.Consume(consumer, topic, subscriber, timeout, msg); err != nil {
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		panic(err)
+	}
 
 	err = microgosuit.ServeGrpc(context.Background(), &microgosuit.ServeGrpcReq{
 		SrvName:              discover.SrvNameBroker,
@@ -58,19 +73,6 @@ func main() {
 		IpVar:                sysCfg.Host,
 		Port:                 sysCfg.Port2,
 		RegisterCustomServiceServerFunc: func(server *grpc.Server) error {
-			etcdCli, err := util.GetOrNewEtcdCli()
-			if err != nil {
-				return err
-			}
-			topicMgr, err := mgr.NewTopicMgr(etcdCli, disc, func(topic, subscriber, consumer string, timeout time.Duration, msg *engine.FileMsg) error {
-				if _, err := consumerHandler.Consume(consumer, topic, subscriber, timeout, msg); err != nil {
-					return err
-				}
-				return nil
-			})
-			if err != nil {
-				return err
-			}
 			broker.RegisterBrokerServer(server, handler.NewBroker(topicMgr))
 			return nil
 		},
@@ -79,7 +81,9 @@ func main() {
 			if err != nil {
 				return err
 			}
+
 			node.Extra = string(nodeDesc)
+
 			return nil
 		},
 		SrvOpts: []grpc.ServerOption{
@@ -89,4 +93,15 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
+}
+
+func parseCmdToInitSysCfg() error {
+	cfgFilePath := flag.String("c", "", "server config file path")
+	flag.Parse()
+
+	if err := syscfg.Init(*cfgFilePath); err != nil {
+		return err
+	}
+
+	return nil
 }

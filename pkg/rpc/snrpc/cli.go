@@ -39,15 +39,18 @@ type callSrvCtx struct {
 	respCh chan *callSrvResp
 }
 
+type OnCliErr func(error)
+
 type Cli struct {
 	conn                net.Conn
 	sNToCallSrvCtxMap   sync.Map
 	protoIdToHandlerMap map[uint32]*MsgHandler
 	closed              atomic.Bool
 	cachedBuf           []byte
+	onErr               OnCliErr
 }
 
-func NewCli(host string, port int) (*Cli, error) {
+func NewCli(host string, port int, onCliErr OnCliErr) (*Cli, error) {
 	conn, err := net.Dial("tcp", fmt.Sprintf("%s:%d", host, port))
 	if err != nil {
 		return nil, err
@@ -56,6 +59,7 @@ func NewCli(host string, port int) (*Cli, error) {
 	cli := &Cli{
 		conn:                conn,
 		protoIdToHandlerMap: map[uint32]*MsgHandler{},
+		onErr:               onCliErr,
 	}
 
 	go cli.readAndProc()
@@ -76,6 +80,7 @@ func (c *Cli) RegProto(protoId uint32, msg interface{}, msgFunc HandleMsgFunc) {
 }
 
 func (c *Cli) readAndProc() {
+	defer c.conn.Close()
 	for {
 		if c.closed.Load() {
 			_ = c.conn.Close()
@@ -85,7 +90,8 @@ func (c *Cli) readAndProc() {
 		msgList, err := c.read(c.conn)
 		if err != nil {
 			util.Logger.Error(nil, err)
-			continue
+			c.onErr(err)
+			break
 		}
 
 		for _, msg := range msgList {

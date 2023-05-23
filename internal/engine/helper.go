@@ -183,7 +183,7 @@ func makeLoadBootFp(baseDir, topic string) (*os.File, error) {
 		return fp, nil
 	}
 
-	return os.OpenFile(genFinishRcFileName(baseDir, topic), os.O_CREATE|os.O_RDWR, os.ModePerm)
+	return os.OpenFile(genLoadBootFileName(baseDir, topic), os.O_CREATE|os.O_RDWR, os.ModePerm)
 }
 
 func makeMsgIdFp(baseDir, topic string) (*os.File, bool, error) {
@@ -211,7 +211,7 @@ func makeMsgIdFp(baseDir, topic string) (*os.File, bool, error) {
 		return fp, false, nil
 	}
 
-	fp, err := os.OpenFile(genLoadBootFileName(baseDir, topic), os.O_CREATE|os.O_RDWR, os.ModePerm)
+	fp, err := os.OpenFile(genMsgIdFileName(baseDir, topic), os.O_CREATE|os.O_RDWR, os.ModePerm)
 	if err != nil {
 		return nil, false, err
 	}

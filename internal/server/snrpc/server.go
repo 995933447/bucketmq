@@ -53,8 +53,8 @@ type Server struct {
 	exitCh              chan struct{}
 	exited              atomic.Bool
 	conns               map[net.Conn]struct{}
-	opConnsMu           sync.RWMutex
 	connCachedBuf       sync.Map
+	opConnsMu           sync.RWMutex
 	protoIdToHandlerMap map[uint32]*MsgHandler
 }
 
@@ -71,6 +71,7 @@ func (s *Server) GetConns() []net.Conn {
 func (s *Server) CloseConn(conn net.Conn) {
 	s.opConnsMu.Lock()
 	defer s.opConnsMu.Unlock()
+
 	delete(s.conns, conn)
 	s.connCachedBuf.Delete(conn)
 	_ = conn.Close()
@@ -212,6 +213,7 @@ out:
 }
 
 func (s *Server) readAndProc(conn net.Conn) {
+	defer s.CloseConn(conn)
 	for {
 		if s.exited.Load() {
 			break
@@ -220,7 +222,7 @@ func (s *Server) readAndProc(conn net.Conn) {
 		msgList, err := s.read(conn)
 		if err != nil {
 			util.Logger.Error(nil, err)
-			continue
+			break
 		}
 
 		for _, msg := range msgList {
