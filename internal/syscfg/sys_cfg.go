@@ -19,6 +19,9 @@ type Cfg struct {
 	Cluster           string
 	IdxFileMaxItemNum uint32
 	DataFileMaxSize   string
+	Host              string
+	Port              int
+	Port2             int
 }
 
 var (

@@ -3,22 +3,30 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"flag"
+	"github.com/995933447/bucketmq/internal/engine"
 	"github.com/995933447/bucketmq/internal/mgr"
 	"github.com/995933447/bucketmq/internal/server/grpc/handler"
 	"github.com/995933447/bucketmq/internal/server/grpc/middleware"
+	"github.com/995933447/bucketmq/internal/server/snrpc"
+	snrpchandler "github.com/995933447/bucketmq/internal/server/snrpc/handler"
 	"github.com/995933447/bucketmq/internal/syscfg"
 	"github.com/995933447/bucketmq/internal/util"
-	"github.com/995933447/bucketmq/pkg/rpc/broker"
 	"github.com/995933447/bucketmq/pkg/discover"
-	"github.com/995933447/gonetutil"
+	"github.com/995933447/bucketmq/pkg/rpc/broker"
 	"github.com/995933447/microgosuit"
 	"github.com/995933447/microgosuit/discovery"
 	"github.com/995933447/microgosuit/factory"
 	"google.golang.org/grpc"
+	"time"
 )
 
 func main() {
-	if err := syscfg.Init(""); err != nil {
+	var cfgFilePath string
+	cfgFilePath = *flag.String("c", "", "server config file path")
+	flag.Parse()
+
+	if err := syscfg.Init(cfgFilePath); err != nil {
 		panic(err)
 	}
 
@@ -33,16 +41,33 @@ func main() {
 		}
 	}()
 
+	sysCfg := syscfg.MustCfg()
+
+	snrpcSrv, err := snrpc.NewServer(sysCfg.Host, sysCfg.Port, 1000)
+	consumerHandler := snrpchandler.NewConsumer(snrpcSrv, time.Second*5)
+	snrpchandler.RegSNPRPCProto(consumerHandler, snrpcSrv)
+	go func() {
+		if err := snrpcSrv.Serve(); err != nil {
+			panic(err)
+		}
+	}()
+
 	err = microgosuit.ServeGrpc(context.Background(), &microgosuit.ServeGrpcReq{
 		SrvName:              discover.SrvNameBroker,
 		RegDiscoverKeyPrefix: discover.SrvNamePrefix,
-		IpVar:                gonetutil.InnerIp,
+		IpVar:                sysCfg.Host,
+		Port:                 sysCfg.Port2,
 		RegisterCustomServiceServerFunc: func(server *grpc.Server) error {
 			etcdCli, err := util.GetOrNewEtcdCli()
 			if err != nil {
 				return err
 			}
-			topicMgr, err := mgr.NewTopicMgr(etcdCli, disc)
+			topicMgr, err := mgr.NewTopicMgr(etcdCli, disc, func(topic, subscriber, consumer string, timeout time.Duration, msg *engine.FileMsg) error {
+				if _, err := consumerHandler.Consume(consumer, topic, subscriber, timeout, msg); err != nil {
+					return err
+				}
+				return nil
+			})
 			if err != nil {
 				return err
 			}
@@ -50,7 +75,7 @@ func main() {
 			return nil
 		},
 		BeforeRegDiscover: func(_ discovery.Discovery, node *discovery.Node) error {
-			nodeDesc, err := json.Marshal(&broker.Node{NodeGrp: syscfg.MustCfg().NodeGrp})
+			nodeDesc, err := json.Marshal(&broker.Node{NodeGrp: sysCfg.NodeGrp})
 			if err != nil {
 				return err
 			}

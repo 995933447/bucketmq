@@ -1,8 +1,9 @@
 package cli
 
 import (
-	"github.com/995933447/bucketmq/pkg/rpc/broker"
 	"github.com/995933447/bucketmq/pkg/discover"
+	"github.com/995933447/bucketmq/pkg/rpc/broker"
+	"github.com/995933447/bucketmq/pkg/rpc/snrpc"
 	"github.com/995933447/microgosuit/discovery"
 	"github.com/995933447/microgosuit/discovery/impl/etcd"
 	"github.com/995933447/microgosuit/grpcsuit"
@@ -38,13 +39,15 @@ type Cli struct {
 	broker.BrokerClient
 }
 
-func (c *Cli) AddConsumer(name, host string, port int) (*Consumer, error) {
+func (c *Cli) AddConsumer(name string) (*Consumer, error) {
+	if consumer, ok := c.consumers[name]; ok {
+		return consumer, nil
+	}
+
 	consumer := &Consumer{
-		cli:   c,
-		name:  name,
-		host:  host,
-		port:  port,
-		procs: map[string]map[string]*proc{},
+		cli:                c,
+		name:               name,
+		topicToSNRPCCliMap: map[string]*snrpc.Cli{},
 	}
 
 	c.consumers[name] = consumer

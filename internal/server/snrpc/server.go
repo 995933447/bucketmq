@@ -1,9 +1,9 @@
 package snrpc
 
 import (
-	"errors"
 	"fmt"
 	"github.com/995933447/bucketmq/internal/util"
+	"github.com/995933447/bucketmq/pkg/rpc"
 	"github.com/995933447/bucketmq/pkg/rpc/errs"
 	"github.com/995933447/bucketmq/pkg/rpc/snrpc"
 	"github.com/995933447/gonetutil"
@@ -16,25 +16,13 @@ import (
 	"time"
 )
 
-var ErrCallbackReqTimeout = errors.New("callback request timeout")
-var ErrServerExited = errors.New("server exited")
-
-func NewMsgHandler(protoId uint32, msg interface{}, handleFunc HandleMsgFunc) *MsgHandler {
-	handler := &MsgHandler{
-		handleFunc: handleFunc,
-		protoId:    protoId,
-	}
-	handler.msgType = reflect.TypeOf(msg)
-	return handler
-}
-
 type MsgHandler struct {
 	protoId    uint32
 	msgType    reflect.Type
 	handleFunc HandleMsgFunc
 }
 
-type HandleMsgFunc func(conn net.Conn, sn string, msg proto.Message) (proto.Message, error)
+type HandleMsgFunc func(conn net.Conn, req proto.Message) (proto.Message, error)
 
 type callbackResp struct {
 	err  *errs.RPCError
@@ -42,28 +30,50 @@ type callbackResp struct {
 }
 
 type callbackCtx struct {
-	respCh  chan *callbackResp
+	respCh chan *callbackResp
+}
+
+func NewServer(host string, port int, maxConnNum uint32) (*Server, error) {
+	return &Server{
+		host:                host,
+		port:                port,
+		maxConnNum:          maxConnNum,
+		exitCh:              make(chan struct{}),
+		conns:               map[net.Conn]struct{}{},
+		protoIdToHandlerMap: map[uint32]*MsgHandler{},
+	}, nil
 }
 
 type Server struct {
-	host                        string
-	port                		int
-	sNToCallbackCtxMap          sync.Map
-	maxConnNum          		uint32
-	listener            		net.Listener
-	exitCh              		chan struct{}
-	exited              		atomic.Bool
-	conns               		map[net.Conn]struct{}
-	opConnsMu					sync.RWMutex
-	connCachedBuf       		map[net.Conn][]byte
-	protoIdToHandlerMap 		map[uint32]*MsgHandler
+	host                string
+	port                int
+	sNToCallbackCtxMap  sync.Map
+	maxConnNum          uint32
+	listener            net.Listener
+	exitCh              chan struct{}
+	exited              atomic.Bool
+	conns               map[net.Conn]struct{}
+	opConnsMu           sync.RWMutex
+	connCachedBuf       sync.Map
+	protoIdToHandlerMap map[uint32]*MsgHandler
+}
+
+func (s *Server) GetConns() []net.Conn {
+	s.opConnsMu.RLock()
+	defer s.opConnsMu.RUnlock()
+	var conns []net.Conn
+	for conn := range s.conns {
+		conns = append(conns, conn)
+	}
+	return conns
 }
 
 func (s *Server) CloseConn(conn net.Conn) {
 	s.opConnsMu.Lock()
 	defer s.opConnsMu.Unlock()
 	delete(s.conns, conn)
-	_= conn.Close()
+	s.connCachedBuf.Delete(conn)
+	_ = conn.Close()
 }
 
 func (s *Server) Callback(conn net.Conn, timeout time.Duration, protoId uint32, req proto.Message, resp proto.Message) error {
@@ -89,13 +99,13 @@ func (s *Server) Callback(conn net.Conn, timeout time.Duration, protoId uint32, 
 	case <-s.exitCh:
 	default:
 		if s.exited.Load() {
-			return ErrServerExited
+			return snrpc.ErrServerExited
 		}
 		select {
-		case <- s.exitCh:
-			return ErrServerExited
+		case <-s.exitCh:
+			return snrpc.ErrServerExited
 		case <-timeoutTimer.C:
-			return ErrCallbackReqTimeout
+			return snrpc.ErrCallbackReqTimeout
 		case respWrap := <-respCh:
 			if respWrap.err != nil {
 				return err
@@ -109,7 +119,7 @@ func (s *Server) Callback(conn net.Conn, timeout time.Duration, protoId uint32, 
 	return nil
 }
 
-func (s *Server) RegProto(protoId uint32, msg, msgFunc HandleMsgFunc) {
+func (s *Server) RegProto(protoId uint32, msg interface{}, msgFunc HandleMsgFunc) {
 	s.protoIdToHandlerMap[protoId] = &MsgHandler{
 		protoId:    protoId,
 		msgType:    reflect.TypeOf(msg),
@@ -240,20 +250,27 @@ func (s *Server) handleMsg(conn net.Conn, msg *snrpc.Msg) {
 		return
 	}
 
-	protoMsg := reflect.New(handler.msgType).Interface().(proto.Message)
-	err := proto.Unmarshal(msg.Data, protoMsg)
+	req := reflect.New(handler.msgType).Interface().(proto.Message)
+	err := proto.Unmarshal(msg.Data, req)
 	if err != nil {
 		util.Logger.Error(nil, err)
 		return
 	}
 
-	resp, err := handler.handleFunc(conn, msg.SN, protoMsg)
-	if err != nil {
-		if _, ok := err.(*errs.RPCError); !ok {
-			err = errs.RPCErr(errs.ErrCode_ErrCodeInternal, err.Error())
+	var resp proto.Message
+	if validator, ok := req.(rpc.Validator); ok {
+		if err := validator.Validate(); err != nil {
+			resp = err
 		}
+	} else {
+		resp, err = handler.handleFunc(conn, req)
+		if err != nil {
+			if _, ok := err.(*errs.RPCError); !ok {
+				err = errs.RPCErr(errs.ErrCode_ErrCodeInternal, err.Error())
+			}
 
-		resp = err.(*errs.RPCError)
+			resp = err.(*errs.RPCError)
+		}
 	}
 
 	buf, err := snrpc.Pack(msg.ProtoId, msg.SN, false, resp)
@@ -273,8 +290,8 @@ func (s *Server) read(conn net.Conn) ([]*snrpc.Msg, error) {
 		return nil, err
 	}
 
-	if cachedBuf, ok := s.connCachedBuf[conn]; ok {
-		buf = append(cachedBuf, buf...)
+	if cachedBuf, ok := s.connCachedBuf.Load(conn); ok {
+		buf = append(cachedBuf.([]byte), buf...)
 	}
 
 	msgList, buf, err := snrpc.Unpack(buf)
@@ -282,7 +299,11 @@ func (s *Server) read(conn net.Conn) ([]*snrpc.Msg, error) {
 		return nil, err
 	}
 
-	s.connCachedBuf[conn] = buf
+	if len(buf) > 0 {
+		s.connCachedBuf.Store(conn, buf)
+	} else {
+		s.connCachedBuf.Delete(conn)
+	}
 
 	return msgList, nil
 }

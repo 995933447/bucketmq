@@ -1,10 +1,12 @@
 syntax = "proto3";
 
 package broker;
-option go_package = "github.com/995933447/bucketmq/pkg/api/broker";
+option go_package = "github.com/995933447/bucketmq/pkg/rpc/broker";
 
 service Broker {
     rpc RegTopic(RegTopicReq) returns (RegTopicResp) {}
+
+    rpc GetTopic(GetTopicReq) returns (GetTopicResp) {}
 
     rpc RegSubscriber(RegSubscriberReq) returns (RegSubscriberResp) {}
 
@@ -47,6 +49,10 @@ message RegSubscriberResp {
 
 message GetTopicReq {
     string topic = 1;
+}
+
+message GetTopicResp {
+    Topic topic = 1;
 }
 
 message PubReq {

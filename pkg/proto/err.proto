@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package err;
-option go_package = "github.com/995933447/bucketmq/pkg/api/errs";
+option go_package = "github.com/995933447/bucketmq/pkg/rpc/errs";
 
 enum ErrCode {
     ErrCodeNil = 0;
@@ -10,6 +10,7 @@ enum ErrCode {
 
     ErrCodeNotNodeGrpAvailable = 1001;
     ErrCodeTopicNotFound = 1002;
+    ErrCodeConsumerNotFound = 1003;
 }
 
 message RPCError {

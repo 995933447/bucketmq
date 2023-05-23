@@ -1,7 +1,7 @@
 syntax = "proto3";
 
 package conumer;
-option go_package = "github.com/995933447/bucketmq/pkg/api/consumer";
+option go_package = "github.com/995933447/bucketmq/pkg/rpc/consumer";
 
 service Consumer {
     rpc Consume(ConsumeReq) returns (ConsumeResp) {}
@@ -18,7 +18,7 @@ message ConsumeResp {
 }
 
 message ConnSNSrvReq {
-    string sn = 1;
+    string s_n = 1;
     string consumer = 2;
 }
 

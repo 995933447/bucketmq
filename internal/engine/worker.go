@@ -1,13 +1,7 @@
 package engine
 
 import (
-	"context"
-	"fmt"
-	"github.com/995933447/bucketmq/pkg/rpc/consumer"
-	"github.com/995933447/microgosuit/discovery"
-	"github.com/995933447/microgosuit/discovery/util"
-	"github.com/995933447/microgosuit/grpcsuit"
-	"google.golang.org/grpc"
+	"github.com/995933447/bucketmq/pkg/rpc/errs"
 	"time"
 )
 
@@ -35,7 +29,12 @@ func (w *worker) run() {
 
 		msg := <-consumeCh
 
-		if err := w.consume(msg); err != nil {
+		if err := w.consumeFunc(w.topic, w.Subscriber.name, w.consumer, time.Millisecond*time.Duration(w.consumeMaxMs), msg); err != nil {
+			if rpcErr, ok := errs.ToRPCErr(err); ok && rpcErr.Code == errs.ErrCode_ErrCodeConsumerNotFound {
+				msg.retryAt = uint32(time.Now().Unix()) + 5
+				continue
+			}
+
 			if msg.retriedCnt < msg.maxRetryCnt {
 				msg.retriedCnt++
 				switch msg.retriedCnt {
@@ -61,37 +60,6 @@ func (w *worker) run() {
 	}
 out:
 	return
-}
-
-func (w *worker) consume(msg *FileMsg) error {
-	consumerNode, err := util.Route(context.Background(), w.Subscriber.Discovery, w.Subscriber.consumer)
-	if err != nil {
-		if err == discovery.ErrSrvNotFound {
-			return nil
-		}
-		return err
-	}
-
-	conn, err := grpc.Dial(fmt.Sprintf("%s:%d", consumerNode.Host, consumerNode.Port), grpcsuit.NotRoundRobinDialOpts...)
-	if err != nil {
-		return err
-	}
-
-	defer conn.Close()
-
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(w.Subscriber.maxConsumeMs)*time.Millisecond)
-	defer cancel()
-	_, err = consumer.NewConsumerClient(conn).Consume(ctx, &consumer.ConsumeReq{
-		Topic:      w.topic,
-		Subscriber: w.Subscriber.name,
-		Data:       msg.data,
-		RetriedCnt: msg.retriedCnt,
-	})
-	if err != nil {
-		return err
-	}
-
-	return nil
 }
 
 func (w *worker) exit() {

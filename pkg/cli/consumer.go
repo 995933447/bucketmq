@@ -3,106 +3,83 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"github.com/995933447/bucketmq/pkg/discover"
+	"github.com/995933447/bucketmq/pkg/rpc/broker"
 	"github.com/995933447/bucketmq/pkg/rpc/consumer"
 	"github.com/995933447/bucketmq/pkg/rpc/health"
-	"github.com/995933447/gonetutil"
+	"github.com/995933447/bucketmq/pkg/rpc/snrpc"
 	"github.com/995933447/microgosuit/discovery"
-	"google.golang.org/grpc"
-	"net"
-	"reflect"
-	"sync"
+	"github.com/golang/protobuf/proto"
+	"time"
 )
-
-type ConsumerProcFunc func(ctx context.Context, req *consumer.ConsumeReq, data interface{}) (*consumer.ConsumeResp, error)
-
-var (
-	_ consumer.ConsumerServer     = (*Consumer)(nil)
-	_ health.HealthReporterServer = (*Consumer)(nil)
-)
-
-type proc struct {
-	handler ConsumerProcFunc
-	msgType reflect.Type
-}
 
 type Consumer struct {
-	cli      *Cli
-	name     string
-	host     string
-	port     int
-	opProcMu sync.RWMutex
-	procs    map[string]map[string]*proc
+	cli                *Cli
+	name               string
+	topicToSNRPCCliMap map[string]*snrpc.Cli
 }
 
-func (c *Consumer) Ping(_ context.Context, _ *health.PingReq) (*health.PingResp, error) {
-	return &health.PingResp{}, nil
-}
-
-func (c *Consumer) Consume(ctx context.Context, req *consumer.ConsumeReq) (*consumer.ConsumeResp, error) {
-	var resp consumer.ConsumeResp
-	procs, ok := c.procs[req.Topic]
-	if !ok {
-		return &resp, nil
+func (c *Consumer) Subscribe(cfg *broker.Subscriber, handleFunc snrpc.HandleMsgFunc) error {
+	cfg.Consumer = c.name
+	grpcReq := &broker.RegSubscriberReq{
+		Subscriber: cfg,
 	}
-
-	proc, ok := procs[req.Subscriber]
-	if !ok {
-		return &resp, nil
-	}
-
-	data := reflect.New(proc.msgType).Interface()
-	err := json.Unmarshal(req.Data, data)
-	if err != nil {
-		return nil, err
-	}
-
-	return proc.handler(ctx, req, data)
-}
-
-func (c *Consumer) Proc(topic, subscriber string, msg interface{}, procFunc ConsumerProcFunc) error {
-	c.opProcMu.Lock()
-	defer c.opProcMu.Unlock()
-
-	procs, ok := c.procs[topic]
-	if !ok {
-		procs = map[string]*proc{}
-		c.procs[topic] = procs
-	}
-
-	procs[subscriber] = &proc{
-		handler: procFunc,
-		msgType: reflect.TypeOf(msg),
-	}
-
-	return nil
-}
-
-func (c *Consumer) Start() error {
-	host, err := gonetutil.EvalVarToParseIp(c.host)
-	if err != nil {
+	if err := grpcReq.Validate(); err != nil {
 		return err
 	}
 
-	listener, err := net.Listen("tcp", fmt.Sprintf("%s:%d", host, c.port))
-	if err != nil {
-		return err
+	if _, ok := c.topicToSNRPCCliMap[cfg.Topic]; !ok {
+		getTopicResp, err := c.cli.BrokerClient.GetTopic(context.Background(), &broker.GetTopicReq{
+			Topic: cfg.Topic,
+		})
+		if err != nil {
+			return err
+		}
+
+		brokerCfg, err := c.cli.discovery.Discover(context.Background(), discover.SrvNameBroker)
+		var destNode *discovery.Node
+		for _, node := range brokerCfg.Nodes {
+			if !node.Available() {
+				continue
+			}
+
+			var nodeDesc broker.Node
+			err = json.Unmarshal([]byte(node.Extra), &nodeDesc)
+			if err != nil {
+				return err
+			}
+
+			if nodeDesc.NodeGrp != getTopicResp.Topic.NodeGrp {
+				continue
+			}
+
+			if nodeDesc.IsMaster {
+				destNode = node
+				break
+			}
+		}
+
+		snprpcCli, err := snrpc.NewCli(destNode.Host, destNode.Port)
+		if err != nil {
+			return err
+		}
+
+		err = snprpcCli.Call(uint32(snrpc.SNRPCProto_SNRPCProtoConsumerConnect), time.Second*5, &consumer.ConnSNSrvReq{
+			SN: snrpc.GenSN(),
+		}, &consumer.ConnSNSrvResp{})
+		if err != nil {
+			return err
+		}
+
+		snprpcCli.RegProto(uint32(snrpc.SNRPCProto_SNRPCProtoConsume), &consumer.ConsumeReq{}, handleFunc)
+		snprpcCli.RegProto(uint32(snrpc.SNRPCProto_SNRPCProtoHeartBeat), &health.PingReq{}, func(req proto.Message) (proto.Message, error) {
+			return &health.PingResp{}, nil
+		})
+
+		c.topicToSNRPCCliMap[cfg.Topic] = snprpcCli
 	}
 
-	node := discovery.NewNode(c.host, c.port)
-	err = c.cli.discovery.Register(context.Background(), c.name, node)
-	if err != nil {
-		return err
-	}
-
-	grpcServer := grpc.NewServer()
-	consumer.RegisterConsumerServer(grpcServer, c)
-
-	defer func() {
-		_ = c.cli.discovery.Unregister(context.Background(), c.name, node, true)
-	}()
-
-	err = grpcServer.Serve(listener)
+	_, err := c.cli.BrokerClient.RegSubscriber(context.Background(), grpcReq)
 	if err != nil {
 		return err
 	}

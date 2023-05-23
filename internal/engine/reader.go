@@ -24,6 +24,14 @@ type FileMsg struct {
 	data              []byte
 }
 
+func (f *FileMsg) GetData() []byte {
+	return f.data
+}
+
+func (f *FileMsg) GetRetriedCnt() uint32 {
+	return f.retriedCnt
+}
+
 func newReader(rg *readerGrp, seq uint64) (*reader, error) {
 	r := &reader{
 		readerGrp:    rg,

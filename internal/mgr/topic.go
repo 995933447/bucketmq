@@ -57,11 +57,12 @@ func (t *topic) close() {
 	}
 }
 
-func NewTopicMgr(etcdCli *clientv3.Client, disc discovery.Discovery) (*TopicMgr, error) {
+func NewTopicMgr(etcdCli *clientv3.Client, disc discovery.Discovery, consumeFunc engine.ConsumeFunc) (*TopicMgr, error) {
 	mgr := &TopicMgr{
-		Discovery: disc,
-		topics:    map[string]*topic{},
-		etcdCli:   etcdCli,
+		Discovery:   disc,
+		topics:      map[string]*topic{},
+		etcdCli:     etcdCli,
+		consumeFunc: consumeFunc,
 	}
 
 	go mgr.loop()
@@ -71,8 +72,9 @@ func NewTopicMgr(etcdCli *clientv3.Client, disc discovery.Discovery) (*TopicMgr,
 
 type TopicMgr struct {
 	discovery.Discovery
-	etcdCli *clientv3.Client
-	topics  map[string]*topic
+	etcdCli     *clientv3.Client
+	topics      map[string]*topic
+	consumeFunc engine.ConsumeFunc
 }
 
 func (m *TopicMgr) loop() {
@@ -168,7 +170,7 @@ func (m *TopicMgr) loop() {
 						MaxConcurConsumeNumPerBucket: cfg.MaxConcurConsumeNumPerBucket,
 						IsSerial:                     cfg.IsSerial,
 						MaxConsumeMs:                 cfg.MaxConsumeMs,
-					})
+					}, m.consumeFunc)
 					if err != nil {
 						mu.Unlock()
 						util.Logger.Error(nil, err)
@@ -237,7 +239,7 @@ func (m *TopicMgr) newTopic(cfg *TopicCfg) (*topic, error) {
 			MsgWeight:                    subscriberCfg.MsgWeight,
 			IsSerial:                     subscriberCfg.IsSerial,
 			MaxConsumeMs:                 subscriberCfg.MaxConsumeMs,
-		})
+		}, m.consumeFunc)
 		if err != nil {
 			mu.Unlock()
 			return nil, err

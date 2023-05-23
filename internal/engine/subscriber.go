@@ -38,7 +38,7 @@ func (r *bucketPendingNumRec) subPending(bucketId uint32) {
 	r.bucketPendingNumMap[bucketId] = pendingNum
 }
 
-func NewSubscriber(discover discovery.Discovery, cfg *SubscriberCfg) (*Subscriber, error) {
+func NewSubscriber(discover discovery.Discovery, cfg *SubscriberCfg, consumeFunc ConsumeFunc) (*Subscriber, error) {
 	subscriber := &Subscriber{
 		baseDir:                      cfg.BaseDir,
 		topic:                        cfg.Topic,
@@ -53,6 +53,7 @@ func NewSubscriber(discover discovery.Discovery, cfg *SubscriberCfg) (*Subscribe
 		confirmMsgCh:                 make(chan *confirmMsgReq),
 		consumer:                     cfg.Consumer,
 		maxConsumeMs:                 cfg.MaxConsumeMs,
+		consumeFunc:                  consumeFunc,
 	}
 
 	var err error
@@ -73,6 +74,8 @@ func NewSubscriber(discover discovery.Discovery, cfg *SubscriberCfg) (*Subscribe
 	return subscriber, nil
 }
 
+type ConsumeFunc func(topic, subscriber, consumer string, timeout time.Duration, msg *FileMsg) error
+
 type Subscriber struct {
 	*queue
 	*readerGrp
@@ -90,6 +93,7 @@ type Subscriber struct {
 	confirmMsgCh                 chan *confirmMsgReq
 	workers                      []*worker
 	maxConsumeMs                 uint32
+	consumeFunc                  ConsumeFunc
 }
 
 func (s *Subscriber) Start() {

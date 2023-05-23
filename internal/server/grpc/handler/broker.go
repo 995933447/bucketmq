@@ -7,10 +7,10 @@ import (
 	"github.com/995933447/bucketmq/internal/engine"
 	"github.com/995933447/bucketmq/internal/mgr"
 	"github.com/995933447/bucketmq/internal/syscfg"
+	"github.com/995933447/bucketmq/pkg/discover"
 	"github.com/995933447/bucketmq/pkg/rpc/broker"
 	"github.com/995933447/bucketmq/pkg/rpc/errs"
 	"github.com/995933447/bucketmq/pkg/rpc/health"
-	"github.com/995933447/bucketmq/pkg/discover"
 	"github.com/995933447/microgosuit/grpcsuit"
 	"google.golang.org/grpc"
 	"time"
@@ -27,6 +27,21 @@ func NewBroker(topicMgr *mgr.TopicMgr) *Broker {
 
 type Broker struct {
 	*mgr.TopicMgr
+}
+
+func (b Broker) GetTopic(ctx context.Context, req *broker.GetTopicReq) (*broker.GetTopicResp, error) {
+	topicCfg, err := b.TopicMgr.GetTopicCfg(req.Topic)
+	if err != nil {
+		return nil, err
+	}
+
+	return &broker.GetTopicResp{
+		Topic: &broker.Topic{
+			Topic:       topicCfg.Name,
+			NodeGrp:     topicCfg.NodeGrp,
+			MaxMsgBytes: topicCfg.MaxMsgBytes,
+		},
+	}, nil
 }
 
 func (b Broker) Ping(ctx context.Context, req *health.PingReq) (*health.PingResp, error) {

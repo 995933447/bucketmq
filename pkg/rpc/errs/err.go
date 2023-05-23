@@ -13,6 +13,13 @@ func GRPCErr(code ErrCode, msg string) error {
 	return status.Error(codes.Code(code), msg)
 }
 
+func ToRPCErr(err error) (*RPCError, bool) {
+	if rpcErr, ok := err.(*RPCError); ok {
+		return rpcErr, false
+	}
+	return nil, false
+}
+
 func RPCErr(code ErrCode, msg string) *RPCError {
 	if msg == "" {
 		msg = code.String()

@@ -1,0 +1,11 @@
+syntax = "proto3";
+
+package health;
+option go_package = "github.com/995933447/bucketmq/pkg/rpc/snrpc";
+
+enum SNRPCProto {
+    SNRPCProtoNil = 0;
+    SNRPCProtoConsumerConnect = 1;
+    SNRPCProtoConsume = 2;
+    SNRPCProtoHeartBeat = 3;
+}
