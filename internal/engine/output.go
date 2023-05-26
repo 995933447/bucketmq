@@ -27,7 +27,7 @@ const (
 	dataFileSuffix = ".dat"
 )
 
-func newOutput(writer *Writer, topic string, seq uint64) (*output, error) {
+func newOutput(writer *Writer, seq uint64) (*output, error) {
 	out := &output{
 		Writer: writer,
 		seq:    seq,
@@ -103,12 +103,16 @@ func (o *output) syncDisk() {
 	}
 }
 
+func (o *output) isAtSameHourSinceLastOpenFile() bool {
+	return o.openFileTime.Format("2006010215") == time.Now().Format("2006010215")
+}
+
 func (o *output) write(msgList []*Msg) error {
 	if len(msgList) == 0 {
 		return nil
 	}
 
-	if o.idxFp == nil || o.dataFp == nil {
+	if o.idxFp == nil || o.dataFp == nil || !o.isAtSameHourSinceLastOpenFile() {
 		if err := o.openNewFile(); err != nil {
 			return err
 		}
@@ -238,6 +242,8 @@ func (o *output) write(msgList []*Msg) error {
 			}
 			n += more
 		}
+
+		o.Writer.afterWriteCh <- o.seq
 
 		if err := o.msgIdGen.Incr(uint64(batchWriteIdxNum)); err != nil {
 			return err

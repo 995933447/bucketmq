@@ -49,7 +49,7 @@ func NewSubscriber(discover discovery.Discovery, cfg *SubscriberCfg, consumeFunc
 		Discovery:                    discover,
 		exitCh:                       make(chan struct{}),
 		readyWorkerCh:                make(chan chan *FileMsg),
-		watchWrittenCh:               make(chan uint64),
+		watchWrittenCh:               cfg.WatchWrittenCh,
 		confirmMsgCh:                 make(chan *confirmMsgReq),
 		consumer:                     cfg.Consumer,
 		maxConsumeMs:                 cfg.MaxConsumeMs,

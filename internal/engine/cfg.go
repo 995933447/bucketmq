@@ -1,6 +1,7 @@
 package engine
 
 type WriterCfg struct {
+	Topic             string
 	BaseDir           string
 	IdxFileMaxItemNum uint32
 	DataFileMaxBytes  uint32
@@ -15,4 +16,5 @@ type SubscriberCfg struct {
 	LodeMode                                       LoadMsgMode
 	StartMsgId                                     uint64
 	MaxConsumeMs                                   uint32
+	WatchWrittenCh                                 chan uint64
 }

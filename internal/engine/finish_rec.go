@@ -38,7 +38,7 @@ func newFinishRec(r *reader) (*finishRec, error) {
 		return nil, err
 	}
 
-	rec.fp, err = makeFinishRcFp(r.reader.readerGrp.Subscriber.baseDir, r.reader.readerGrp.Subscriber.topic)
+	rec.fp, err = makeFinishRcFp(r.reader.readerGrp.Subscriber.baseDir, r.reader.readerGrp.Subscriber.topic, r.reader.readerGrp.Subscriber.name)
 	if err != nil {
 		return nil, err
 	}

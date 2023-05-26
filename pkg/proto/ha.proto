@@ -1,0 +1,25 @@
+syntax = "proto3";
+
+package broker;
+option go_package = "github.com/995933447/bucketmq/pkg/rpc/ha";
+
+service HA {
+
+}
+
+enum MsgFileType {
+    MsgFileTypeNil = 0;
+    MsgFileTypeIdx = 1;
+    MsgFileTypeData = 2;
+    MsgFileTypeFinish = 3;
+    MsgFileTypeMsgId = 4;
+    MsgFileTypeLoadBoot = 5;
+}
+
+message SyncMsgFileLogItem {
+    string topic = 1;
+    string subscriber = 2;
+    bytes file_buf = 3;
+    MsgFileType msg_file_type = 4;
+    string file_name = 5;
+}

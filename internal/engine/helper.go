@@ -16,53 +16,24 @@ func genDataFileName(baseDir, topic string, seq uint64) string {
 	return fmt.Sprintf("%s/%s_%d"+dataFileSuffix, getTopicFileDir(baseDir, topic), time.Now().Format("2006010215"), seq)
 }
 
-func genFinishRcFileName(baseDir, topic string) string {
-	return fmt.Sprintf("%s/%s"+finishFileSuffix, getTopicFileDir(baseDir, topic), time.Now().Format("2006010215"))
+func genFinishRcFileName(baseDir, topic, subscriber string) string {
+	return fmt.Sprintf("%s/%s"+finishFileSuffix, getSubscriberFileDir(baseDir, topic, subscriber), time.Now().Format("2006010215"))
 }
 
 func genMsgIdFileName(baseDir, topic string) string {
 	return fmt.Sprintf("%s/%s"+msgIdFileSuffix, getTopicFileDir(baseDir, topic), time.Now().Format("2006010215"))
 }
 
-func genLoadBootFileName(baseDir, topic string) string {
-	return fmt.Sprintf("%s/%s"+loadBootFileSuffix, getTopicFileDir(baseDir, topic), time.Now().Format("2006010215"))
+func genLoadBootFileName(baseDir, topic, subscriber string) string {
+	return fmt.Sprintf("%s/%s"+loadBootFileSuffix, getSubscriberFileDir(baseDir, topic, subscriber), time.Now().Format("2006010215"))
 }
 
 func getTopicFileDir(baseDir, topic string) string {
-	return fmt.Sprintf("%s/%s%s", baseDir, topicDirPrefix, topic)
+	return fmt.Sprintf("%s/%s", baseDir, topic)
 }
 
-func scanDirToParseTopics(dir string, checkTopicValid func(topic string) bool) ([]string, error) {
-	if err := mkdirIfNotExist(dir); err != nil {
-		return nil, err
-	}
-
-	files, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
-	}
-
-	var topics []string
-	for _, file := range files {
-		if !file.IsDir() {
-			continue
-		}
-
-		fileName := file.Name()
-		if !strings.HasPrefix(fileName, topicDirPrefix) {
-			continue
-		}
-
-		topic := fileName[len(topicDirPrefix):]
-
-		if !checkTopicValid(topic) {
-			continue
-		}
-
-		topics = append(topics, topic)
-	}
-
-	return topics, nil
+func getSubscriberFileDir(baseDir, topic, subscriber string) string {
+	return fmt.Sprintf("%s/%s/%s", baseDir, topic, subscriber)
 }
 
 func mkdirIfNotExist(dir string) error {
@@ -158,8 +129,8 @@ func makeSeqDataFp(baseDir, topic string, seq uint64, flag int) (*os.File, error
 	return os.OpenFile(genDataFileName(baseDir, topic, seq), flag, os.ModePerm)
 }
 
-func makeLoadBootFp(baseDir, topic string) (*os.File, error) {
-	dir := getTopicFileDir(baseDir, topic)
+func makeLoadBootFp(baseDir, topic, subscriber string) (*os.File, error) {
+	dir := getSubscriberFileDir(baseDir, topic, subscriber)
 
 	if err := mkdirIfNotExist(dir); err != nil {
 		return nil, err
@@ -183,7 +154,7 @@ func makeLoadBootFp(baseDir, topic string) (*os.File, error) {
 		return fp, nil
 	}
 
-	return os.OpenFile(genLoadBootFileName(baseDir, topic), os.O_CREATE|os.O_RDWR, os.ModePerm)
+	return os.OpenFile(genLoadBootFileName(baseDir, topic, subscriber), os.O_CREATE|os.O_RDWR, os.ModePerm)
 }
 
 func makeMsgIdFp(baseDir, topic string) (*os.File, bool, error) {
@@ -219,8 +190,8 @@ func makeMsgIdFp(baseDir, topic string) (*os.File, bool, error) {
 	return fp, true, nil
 }
 
-func makeFinishRcFp(baseDir, topic string) (*os.File, error) {
-	dir := getTopicFileDir(baseDir, topic)
+func makeFinishRcFp(baseDir, topic, subscriber string) (*os.File, error) {
+	dir := getSubscriberFileDir(baseDir, topic, subscriber)
 
 	if err := mkdirIfNotExist(dir); err != nil {
 		return nil, err
@@ -244,7 +215,7 @@ func makeFinishRcFp(baseDir, topic string) (*os.File, error) {
 		return fp, nil
 	}
 
-	return os.OpenFile(genFinishRcFileName(baseDir, topic), os.O_CREATE|os.O_RDWR, os.ModePerm)
+	return os.OpenFile(genFinishRcFileName(baseDir, topic, subscriber), os.O_CREATE|os.O_RDWR, os.ModePerm)
 }
 
 func scanDirToParseOldestSeq(baseDir, topic string) (uint64, error) {

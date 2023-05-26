@@ -18,9 +18,8 @@ func Recover() grpc.UnaryServerInterceptor {
 func AutoValidate() grpc.UnaryServerInterceptor {
 	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
 		if validator, ok := req.(rpc.Validator); ok {
-			status := validator.Validate()
-			if status != nil {
-				err = status.Err()
+			err = validator.Validate()
+			if err != nil {
 				return
 			}
 		}

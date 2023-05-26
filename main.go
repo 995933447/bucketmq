@@ -67,6 +67,10 @@ func main() {
 		panic(err)
 	}
 
+	go func() {
+		topicMgr.Start()
+	}()
+
 	err = microgosuit.ServeGrpc(context.Background(), &microgosuit.ServeGrpcReq{
 		SrvName:              discover.SrvNameBroker,
 		RegDiscoverKeyPrefix: discover.SrvNamePrefix,

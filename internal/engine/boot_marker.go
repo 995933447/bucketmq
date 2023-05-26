@@ -21,7 +21,7 @@ func newBootMarker(readerGrp *readerGrp) (*bootMarker, error) {
 		readerGrp: readerGrp,
 	}
 	var err error
-	boot.fp, err = makeLoadBootFp(boot.readerGrp.Subscriber.baseDir, boot.readerGrp.Subscriber.topic)
+	boot.fp, err = makeLoadBootFp(boot.readerGrp.Subscriber.baseDir, boot.readerGrp.Subscriber.topic, boot.readerGrp.Subscriber.name)
 	if err != nil {
 		return nil, err
 	}

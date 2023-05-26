@@ -1,44 +1,23 @@
-package engine
+package synclog
 
 import (
 	"github.com/995933447/bucketmq/internal/util"
+	"github.com/995933447/bucketmq/pkg/rpc/ha"
 	"path/filepath"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
-type Msg struct {
-	Topic      string
-	Priority   uint8
-	DelayMs    uint32
-	RetryCnt   uint32
-	BucketId   uint32
-	Buf        []byte
-	compressed []byte
-	*WriteMsgResWait
-}
-
-type WriteMsgResWait struct {
-	Err        error
-	Wg         sync.WaitGroup
-	IsFinished bool
-}
-
 type Writer struct {
-	topic             string
-	baseDir           string
-	idxFileMaxItemNum uint32
-	dataFileMaxBytes  uint32
-	enabledCompress   atomic.Bool
-	msgChan           chan *Msg
-	unwatchCfgSignCh  chan struct{}
-	flushSignCh       chan struct{}
-	flushWait         sync.WaitGroup
-	status            runState
-	output            *output
-	afterWriteCh      chan uint64
+	baseDir          string
+	output           *output
+	msgChan          chan *ha.SyncMsgFileLogItem
+	flushSignCh      chan struct{}
+	flushWait        sync.WaitGroup
+	status           runState
+	unwatchCfgSignCh chan struct{}
+	onFileCorrupted  func()
 }
 
 func (w *Writer) loop() {
@@ -58,7 +37,7 @@ func (w *Writer) loop() {
 		case <-checkCorruptTk.C:
 			corrupted, err := w.output.isCorrupted()
 			if err != nil {
-				util.Logger.Error(nil, err)
+				util.Logger.Debug(nil, err)
 				continue
 			}
 
@@ -67,18 +46,14 @@ func (w *Writer) loop() {
 				continue
 			}
 
-			if err = w.output.openNewFile(); err != nil {
-				w.output.idxFp = nil
-				w.output.dataFp = nil
-				util.Logger.Error(nil, err)
-			}
+			w.onFileCorrupted()
 		case msg := <-w.msgChan:
-			if err := w.doWriteMost([]*Msg{msg}); err != nil {
-				util.Logger.Error(nil, err)
+			if err := w.doWriteMost([]*ha.SyncMsgFileLogItem{msg}); err != nil {
+				util.Logger.Debug(nil, err)
 			}
 		case <-w.flushSignCh:
 			if err := w.doWriteMost(nil); err != nil {
-				util.Logger.Error(nil, err)
+				util.Logger.Debug(nil, err)
 			}
 
 			w.output.syncDisk()
@@ -104,16 +79,16 @@ func (w *Writer) loop() {
 }
 
 // write msg as many as we can
-func (w *Writer) doWriteMost(msgList []*Msg) error {
+func (w *Writer) doWriteMost(msgList []*ha.SyncMsgFileLogItem) error {
 	var total int
 	for _, msg := range msgList {
-		total += len(msg.Buf)
+		total += len(msg.FileBuf)
 	}
 	for {
 		select {
 		case more := <-w.msgChan:
 			msgList = append(msgList, more)
-			total += len(more.Buf)
+			total += len(more.FileBuf)
 			if total >= 2*1024*1024 {
 				goto doWrite
 			}
@@ -123,29 +98,15 @@ func (w *Writer) doWriteMost(msgList []*Msg) error {
 	}
 doWrite:
 	if err := w.doWrite(msgList); err != nil {
-		for _, msg := range msgList {
-			if msg.WriteMsgResWait == nil {
-				continue
-			}
-			if msg.IsFinished {
-				continue
-			}
-			msg.IsFinished = true
-			msg.Err = err
-			msg.Wg.Done()
-		}
 		return err
 	}
 	return nil
 }
 
-func (w *Writer) doWrite(msgList []*Msg) error {
+func (w *Writer) doWrite(msgList []*ha.SyncMsgFileLogItem) error {
 	if w.output == nil {
-		newestSeq, err := scanDirToParseNewestSeq(w.baseDir, w.topic)
-		if err != nil {
-			return err
-		}
-		w.output, err = newOutput(w, newestSeq)
+		var err error
+		w.output, err = newOutput(w)
 		if err != nil {
 			return err
 		}
@@ -158,7 +119,7 @@ func (w *Writer) doWrite(msgList []*Msg) error {
 	return nil
 }
 
-func (w *Writer) Write(msg *Msg) {
+func (w *Writer) Write(msg *ha.SyncMsgFileLogItem) {
 	w.msgChan <- msg
 }
 
@@ -202,20 +163,12 @@ func (w *Writer) IsRunning() bool {
 	return w.status == runStateRunning
 }
 
-func (w *Writer) GetAfterWriteCh() chan uint64 {
-	return w.afterWriteCh
-}
-
-func NewWriter(cfg *WriterCfg) *Writer {
+func NewWriter(baseDir string) *Writer {
 	writer := &Writer{
-		topic:             cfg.Topic,
-		baseDir:           strings.TrimRight(cfg.BaseDir, string(filepath.Separator)),
-		msgChan:           make(chan *Msg, 100000),
-		flushSignCh:       make(chan struct{}),
-		unwatchCfgSignCh:  make(chan struct{}),
-		afterWriteCh:      make(chan uint64),
-		idxFileMaxItemNum: cfg.IdxFileMaxItemNum,
-		dataFileMaxBytes:  cfg.DataFileMaxBytes,
+		baseDir:          strings.TrimRight(baseDir, string(filepath.Separator)),
+		msgChan:          make(chan *ha.SyncMsgFileLogItem, 100000),
+		flushSignCh:      make(chan struct{}),
+		unwatchCfgSignCh: make(chan struct{}),
 	}
 
 	go func() {

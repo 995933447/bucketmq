@@ -11,6 +11,8 @@ import (
 	"github.com/995933447/microgosuit/discovery"
 	"github.com/995933447/runtimeutil"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"sync"
+	"sync/atomic"
 )
 
 const (
@@ -27,6 +29,8 @@ type TopicCfg struct {
 	Name        string
 	NodeGrp     string
 	MaxMsgBytes uint32
+
+	version int64
 }
 
 type SubscriberCfg struct {
@@ -41,13 +45,18 @@ type SubscriberCfg struct {
 	StartMsgId                   uint64
 	IsSerial                     bool
 	MaxConsumeMs                 uint32
+
+	version int64
 }
 
 type topic struct {
-	name            string
-	writer          *engine.Writer
-	subscribers     map[string]*engine.Subscriber
-	opSubscribersMu *runtimeutil.MulElemMuFactory
+	name                  string
+	writer                *engine.Writer
+	cfg                   *TopicCfg
+	subscribers           map[string]*engine.Subscriber
+	SubscriberCfgs        map[string]*SubscriberCfg
+	opSubscriberMuFactory *runtimeutil.MulElemMuFactory
+	opSubscribersMu       sync.RWMutex
 }
 
 func (t *topic) close() {
@@ -59,30 +68,204 @@ func (t *topic) close() {
 
 func NewTopicMgr(etcdCli *clientv3.Client, disc discovery.Discovery, consumeFunc engine.ConsumeFunc) (*TopicMgr, error) {
 	mgr := &TopicMgr{
-		Discovery:   disc,
-		topics:      map[string]*topic{},
-		etcdCli:     etcdCli,
-		consumeFunc: consumeFunc,
+		Discovery:        disc,
+		topics:           map[string]*topic{},
+		etcdCli:          etcdCli,
+		consumeFunc:      consumeFunc,
+		opTopicMuFactory: runtimeutil.NewMulElemMuFactory(),
+	}
+
+	topicCfgs, err := mgr.listTopicCfgsFromEtcd()
+	if err != nil {
+		return nil, err
 	}
 
 	go mgr.loop()
+
+	for _, cfg := range topicCfgs {
+		opTopicMu := mgr.opTopicMuFactory.MakeOrGetSpecElemMu(cfg.Name)
+		opTopicMu.Lock()
+
+		mgr.opTopicsMu.RLock()
+		if topic, ok := mgr.topics[cfg.Name]; ok {
+			mgr.opTopicsMu.RUnlock()
+			if topic.cfg.version > cfg.version {
+				opTopicMu.RUnlock()
+				continue
+			}
+		}
+		mgr.opTopicsMu.RUnlock()
+
+		topic, err := mgr.newTopic(cfg)
+		if err != nil {
+			opTopicMu.Unlock()
+			mgr.exitLoopCh <- struct{}{}
+			mgr.Exit()
+			return nil, err
+		}
+
+		mgr.topics[cfg.Name] = topic
+		opTopicMu.Unlock()
+	}
 
 	return mgr, nil
 }
 
 type TopicMgr struct {
 	discovery.Discovery
-	etcdCli     *clientv3.Client
-	topics      map[string]*topic
-	consumeFunc engine.ConsumeFunc
+	etcdCli          *clientv3.Client
+	topics           map[string]*topic
+	opTopicsMu       sync.RWMutex
+	opTopicMuFactory *runtimeutil.MulElemMuFactory
+	consumeFunc      engine.ConsumeFunc
+	isRunning        atomic.Bool
+	exitLoopCh       chan struct{}
+}
+
+func (m *TopicMgr) onTopicCfgUpdated(cfg *TopicCfg) error {
+	opTopicMu := m.opTopicMuFactory.MakeOrGetSpecElemMu(cfg.Name)
+	opTopicMu.Lock()
+	defer opTopicMu.Unlock()
+
+	var (
+		topic *topic
+		err   error
+		ok    bool
+	)
+	m.opTopicsMu.Lock()
+	if topic, ok = m.topics[cfg.Name]; ok {
+		m.opTopicsMu.RUnlock()
+		if cfg.version <= topic.cfg.version {
+			return nil
+		}
+		topic.cfg.version = cfg.version
+	} else {
+		m.opTopicsMu.RUnlock()
+		if topic, err = m.newTopic(cfg); err != nil {
+			return err
+		}
+	}
+
+	m.opTopicsMu.Lock()
+	m.topics[cfg.Name] = topic
+	m.opTopicsMu.Unlock()
+
+	return nil
+}
+
+func (m *TopicMgr) onTopicCfgDel(cfg *TopicCfg) error {
+	opTopicMu := m.opTopicMuFactory.MakeOrGetSpecElemMu(cfg.Name)
+	opTopicMu.Lock()
+	defer opTopicMu.Unlock()
+
+	m.opTopicsMu.RLock()
+	topic, ok := m.topics[cfg.Name]
+	if !ok {
+		m.opTopicsMu.RUnlock()
+		return nil
+	}
+
+	if topic.cfg.version > cfg.version {
+		m.opTopicsMu.RUnlock()
+		return nil
+	}
+
+	topic.close()
+
+	m.opTopicsMu.Lock()
+	defer m.opTopicsMu.Unlock()
+
+	delete(m.topics, cfg.Name)
+
+	return nil
+}
+
+func (m *TopicMgr) onSubscriberCfgDel(cfg *SubscriberCfg) error {
+	m.opTopicsMu.RLock()
+
+	topic, ok := m.topics[cfg.Topic]
+	if !ok {
+		m.opTopicsMu.RUnlock()
+		return nil
+	}
+
+	opTopicMu := m.opTopicMuFactory.MakeOrGetSpecElemMu(cfg.Topic)
+	opTopicMu.Lock()
+	defer opTopicMu.Unlock()
+
+	m.opTopicsMu.RUnlock()
+
+	if origCfg, ok := topic.SubscriberCfgs[cfg.Name]; ok && origCfg.version > cfg.version {
+		return nil
+	}
+
+	if subscriber, ok := topic.subscribers[cfg.Name]; ok {
+		subscriber.Exit()
+	}
+
+	delete(topic.subscribers, cfg.Name)
+	delete(topic.SubscriberCfgs, cfg.Name)
+
+	return nil
+}
+
+func (m *TopicMgr) onSubscriberCfgUpdated(cfg *SubscriberCfg) error {
+	m.opTopicsMu.RLock()
+
+	topic, ok := m.topics[cfg.Topic]
+	if !ok {
+		m.opTopicsMu.RUnlock()
+		return nil
+	}
+
+	opTopicMu := m.opTopicMuFactory.MakeOrGetSpecElemMu(cfg.Topic)
+	opTopicMu.Lock()
+	defer opTopicMu.Unlock()
+
+	m.opTopicsMu.RUnlock()
+
+	if origCfg, ok := topic.SubscriberCfgs[cfg.Name]; ok && origCfg.version >= cfg.version {
+		return nil
+	}
+
+	if subscriber, ok := topic.subscribers[cfg.Name]; ok {
+		subscriber.Exit()
+	}
+
+	subscriber, err := engine.NewSubscriber(m.Discovery, &engine.SubscriberCfg{
+		LodeMode:                     cfg.LodeMode,
+		LoadMsgBootId:                cfg.LoadMsgBootId,
+		StartMsgId:                   cfg.StartMsgId,
+		BaseDir:                      syscfg.MustCfg().DataDir,
+		Topic:                        cfg.Topic,
+		Name:                         cfg.Name,
+		Consumer:                     cfg.Consumer,
+		MsgWeight:                    cfg.MsgWeight,
+		ConcurConsumeNum:             cfg.ConcurConsumeNum,
+		MaxConcurConsumeNumPerBucket: cfg.MaxConcurConsumeNumPerBucket,
+		IsSerial:                     cfg.IsSerial,
+		MaxConsumeMs:                 cfg.MaxConsumeMs,
+		WatchWrittenCh:               topic.writer.GetAfterWriteCh(),
+	}, m.consumeFunc)
+	if err != nil {
+		util.Logger.Error(nil, err)
+		return nil
+	}
+
+	topic.subscribers[cfg.Name] = subscriber
+	topic.SubscriberCfgs[cfg.Name] = cfg
+
+	return nil
 }
 
 func (m *TopicMgr) loop() {
 	sysCfg := syscfg.MustCfg()
 	topicEvtCh := m.etcdCli.Watch(context.Background(), m.getTopicEtcdKeyPrefix())
 	subscriberEvtCh := m.etcdCli.Watch(context.Background(), m.getSubscriberEtcdKeyPrefix())
-	doLoop := func() {
+	for {
 		select {
+		case <-m.exitLoopCh:
+			goto out
 		case evtResp := <-topicEvtCh:
 			for _, evt := range evtResp.Events {
 				var cfg TopicCfg
@@ -97,115 +280,58 @@ func (m *TopicMgr) loop() {
 				}
 
 				if evt.Type == clientv3.EventTypePut {
-					var (
-						topic *topic
-						ok    bool
-					)
-					if topic, ok = m.topics[cfg.Name]; !ok {
-						if topic, err = m.newTopic(&cfg); err != nil {
-							util.Logger.Error(nil, err)
-							continue
-						}
+					if err = m.onTopicCfgUpdated(&cfg); err != nil {
+						util.Logger.Error(nil, err)
 					}
-					m.topics[cfg.Name] = topic
 					continue
 				}
 
 				if evt.Type == clientv3.EventTypeDelete {
-					topic, ok := m.topics[cfg.Name]
-					if ok {
-						topic.close()
+					if err = m.onTopicCfgDel(&cfg); err != nil {
+						util.Logger.Error(nil, err)
 					}
+					continue
 				}
 			}
 		case evtResp := <-subscriberEvtCh:
 			for _, evt := range evtResp.Events {
 				var cfg SubscriberCfg
-				err := json.Unmarshal(evt.Kv.Value, &cfg)
-				if err != nil {
+				if err := json.Unmarshal(evt.Kv.Value, &cfg); err != nil {
 					util.Logger.Error(nil, err)
 					continue
 				}
 
-				topic, ok := m.topics[cfg.Topic]
-				if !ok {
-					topicCfg, _, exist, err := m.queryTopicCfgFromEtcd(cfg.Topic)
-					if err != nil {
-						util.Logger.Error(nil, err)
-						continue
-					}
-
-					if !exist {
-						continue
-					}
-
-					if topicCfg.NodeGrp != sysCfg.NodeGrp {
-						continue
-					}
-
-					m.topics[cfg.Topic], err = m.newTopic(topicCfg)
-					if err != nil {
-						util.Logger.Error(nil, err)
-						continue
-					}
-				}
-
-				mu := topic.opSubscribersMu.MakeOrGetSpecElemMu(cfg.Name)
-				mu.Lock()
 				if evt.Type == clientv3.EventTypePut {
-					if subscriber, ok := topic.subscribers[cfg.Name]; ok {
-						subscriber.Exit()
-					}
-
-					subscriber, err := engine.NewSubscriber(m.Discovery, &engine.SubscriberCfg{
-						LodeMode:                     cfg.LodeMode,
-						LoadMsgBootId:                cfg.LoadMsgBootId,
-						StartMsgId:                   cfg.StartMsgId,
-						BaseDir:                      sysCfg.DataDir,
-						Topic:                        cfg.Topic,
-						Name:                         cfg.Name,
-						Consumer:                     cfg.Consumer,
-						MsgWeight:                    cfg.MsgWeight,
-						ConcurConsumeNum:             cfg.ConcurConsumeNum,
-						MaxConcurConsumeNumPerBucket: cfg.MaxConcurConsumeNumPerBucket,
-						IsSerial:                     cfg.IsSerial,
-						MaxConsumeMs:                 cfg.MaxConsumeMs,
-					}, m.consumeFunc)
-					if err != nil {
-						mu.Unlock()
+					if err := m.onSubscriberCfgUpdated(&cfg); err != nil {
 						util.Logger.Error(nil, err)
 						continue
 					}
-
-					topic.subscribers[cfg.Name] = subscriber
-					mu.Unlock()
-					continue
 				}
 
 				if evt.Type == clientv3.EventTypeDelete {
-					if subscriber, ok := topic.subscribers[cfg.Name]; ok {
-						subscriber.Exit()
-						delete(topic.subscribers, cfg.Name)
+					if err := m.onSubscriberCfgDel(&cfg); err != nil {
+						util.Logger.Error(nil, err)
+						continue
 					}
 				}
-				mu.Unlock()
 			}
 		}
 	}
-	for {
-		doLoop()
-	}
+out:
+	return
 }
 
 func (m *TopicMgr) newTopic(cfg *TopicCfg) (*topic, error) {
 	topic := &topic{
-		name:            cfg.Name,
-		subscribers:     map[string]*engine.Subscriber{},
-		opSubscribersMu: runtimeutil.NewMulElemMuFactory(),
+		name:           cfg.Name,
+		cfg:            cfg,
+		subscribers:    map[string]*engine.Subscriber{},
+		SubscriberCfgs: map[string]*SubscriberCfg{},
 	}
 
 	sysCfg := syscfg.MustCfg()
 	writerCfg := &engine.WriterCfg{
+		Topic:             cfg.Name,
 		BaseDir:           sysCfg.DataDir,
 		IdxFileMaxItemNum: sysCfg.IdxFileMaxItemNum,
 	}
@@ -224,8 +350,6 @@ func (m *TopicMgr) newTopic(cfg *TopicCfg) (*topic, error) {
 	}
 
 	for _, subscriberCfg := range subscriberCfgs {
-		mu := topic.opSubscribersMu.MakeOrGetSpecElemMu(subscriberCfg.Name)
-		mu.Lock()
 		topic.subscribers[subscriberCfg.Name], err = engine.NewSubscriber(m.Discovery, &engine.SubscriberCfg{
 			LoadMsgBootId:                subscriberCfg.LoadMsgBootId,
 			LodeMode:                     subscriberCfg.LodeMode,
@@ -239,12 +363,13 @@ func (m *TopicMgr) newTopic(cfg *TopicCfg) (*topic, error) {
 			MsgWeight:                    subscriberCfg.MsgWeight,
 			IsSerial:                     subscriberCfg.IsSerial,
 			MaxConsumeMs:                 subscriberCfg.MaxConsumeMs,
+			WatchWrittenCh:               topic.writer.GetAfterWriteCh(),
 		}, m.consumeFunc)
 		if err != nil {
-			mu.Unlock()
 			return nil, err
 		}
-		mu.Unlock()
+
+		topic.SubscriberCfgs[subscriberCfg.Name] = subscriberCfg
 	}
 
 	return topic, nil
@@ -266,6 +391,34 @@ func (m *TopicMgr) checkTopicOrSubscriberName(name string) error {
 	return nil
 }
 
+func (m *TopicMgr) Start() {
+	if m.isRunning.Load() {
+		return
+	}
+
+	m.isRunning.Store(true)
+
+	for _, topic := range m.topics {
+		for _, subscriber := range topic.subscribers {
+			go subscriber.Start()
+		}
+	}
+}
+
+func (m *TopicMgr) Exit() {
+	if !m.isRunning.Load() {
+		return
+	}
+
+	m.isRunning.Store(false)
+
+	for _, topic := range m.topics {
+		for _, subscriber := range topic.subscribers {
+			subscriber.Exit()
+		}
+	}
+}
+
 func (m *TopicMgr) RegSubscriber(cfg *SubscriberCfg) error {
 	if err := m.checkTopicOrSubscriberName(cfg.Topic); err != nil {
 		return err
@@ -275,16 +428,7 @@ func (m *TopicMgr) RegSubscriber(cfg *SubscriberCfg) error {
 		return err
 	}
 
-	_, _, exist, err := m.queryTopicCfgFromEtcd(cfg.Topic)
-	if err != nil {
-		return err
-	}
-
-	if !exist {
-		return ErrTopicNotFound
-	}
-
-	origCfg, version, exist, err := m.querySubscriberCfgFromEtcd(cfg.Topic, cfg.Name)
+	origCfg, exist, err := m.querySubscriberCfgFromEtcd(cfg.Topic, cfg.Name)
 	if err != nil {
 		return err
 	}
@@ -298,12 +442,15 @@ func (m *TopicMgr) RegSubscriber(cfg *SubscriberCfg) error {
 		cfg.LodeMode != origCfg.LodeMode ||
 		cfg.MsgWeight != origCfg.MsgWeight ||
 		cfg.MaxConcurConsumeNumPerBucket != cfg.MaxConcurConsumeNumPerBucket ||
-		cfg.ConcurConsumeNum != origCfg.ConcurConsumeNum {
+		cfg.ConcurConsumeNum != origCfg.ConcurConsumeNum ||
+		cfg.MaxConsumeMs != origCfg.MaxConsumeMs ||
+		cfg.Consumer != origCfg.Consumer ||
+		cfg.IsSerial != origCfg.IsSerial {
 		needUpdate = true
 	}
 
 	if needUpdate {
-		_, err = m.atomicPersistSubscriber(version, cfg)
+		_, err = m.atomicPersistSubscriber(origCfg.version, cfg)
 		if err != nil {
 			return err
 		}
@@ -317,7 +464,7 @@ func (m *TopicMgr) RegTopic(cfg *TopicCfg) error {
 		return err
 	}
 
-	origCfg, version, exist, err := m.queryTopicCfgFromEtcd(cfg.Name)
+	origCfg, exist, err := m.queryTopicCfgFromEtcd(cfg.Name)
 	if err != nil {
 		return err
 	}
@@ -339,7 +486,31 @@ func (m *TopicMgr) RegTopic(cfg *TopicCfg) error {
 		return nil
 	}
 
-	_, err = m.atomicPersistTopic(version, cfg)
+	opTopicMu := m.opTopicMuFactory.MakeOrGetSpecElemMu(cfg.Name)
+	opTopicMu.Lock()
+	defer opTopicMu.Unlock()
+
+	succ, err := m.atomicPersistTopic(cfg.version, cfg)
+	if err != nil {
+		return err
+	}
+
+	if !succ {
+		return nil
+	}
+
+	m.opTopicsMu.Lock()
+	defer m.opTopicsMu.Unlock()
+
+	if topic, ok := m.topics[cfg.Name]; ok {
+		if topic.cfg.version >= cfg.version {
+			return nil
+		}
+		topic.cfg = cfg
+		return nil
+	}
+
+	m.topics[cfg.Name], err = m.newTopic(cfg)
 	if err != nil {
 		return err
 	}
@@ -352,9 +523,40 @@ func (m *TopicMgr) UnRegTopic(cfg *TopicCfg) error {
 		return err
 	}
 
-	if _, err := m.etcdCli.Delete(context.Background(), m.topicToEtcdKey(cfg.Name)); err != nil {
+	origCfg, exist, err := m.queryTopicCfgFromEtcd(cfg.Name)
+	if err != nil {
 		return err
 	}
+
+	if !exist {
+		return nil
+	}
+
+	opTopicMu := m.opTopicMuFactory.MakeOrGetSpecElemMu(cfg.Name)
+	opTopicMu.Lock()
+	defer opTopicMu.Unlock()
+
+	succ, err := m.atomicDelTopic(origCfg.version, cfg)
+	if err != nil {
+		return err
+	}
+
+	if !succ {
+		return nil
+	}
+
+	m.opTopicsMu.RLock()
+	if topic, ok := m.topics[cfg.Name]; !ok {
+		m.opTopicsMu.RUnlock()
+	} else {
+		m.opTopicsMu.RUnlock()
+		topic.close()
+	}
+
+	m.opTopicsMu.Lock()
+	defer m.opTopicsMu.Unlock()
+
+	delete(m.topics, cfg.Name)
 
 	return nil
 }
@@ -402,7 +604,7 @@ func (m *TopicMgr) GetTopicCfg(topic string) (*TopicCfg, error) {
 		return nil, err
 	}
 
-	cfg, _, exist, err := m.queryTopicCfgFromEtcd(topic)
+	cfg, exist, err := m.queryTopicCfgFromEtcd(topic)
 	if err != nil {
 		return nil, err
 	}
@@ -412,6 +614,29 @@ func (m *TopicMgr) GetTopicCfg(topic string) (*TopicCfg, error) {
 	}
 
 	return cfg, nil
+}
+
+func (m *TopicMgr) listTopicCfgsFromEtcd() ([]*TopicCfg, error) {
+	getResp, err := m.etcdCli.Get(context.Background(), m.getTopicEtcdKeyPrefix(), clientv3.WithPrefix())
+	if err != nil {
+		return nil, err
+	}
+
+	var cfgs []*TopicCfg
+	for _, kv := range getResp.Kvs {
+		var cfg TopicCfg
+
+		err = json.Unmarshal(kv.Value, &cfg)
+		if err != nil {
+			return nil, err
+		}
+
+		cfg.version = kv.Version
+
+		cfgs = append(cfgs, &cfg)
+	}
+
+	return cfgs, nil
 }
 
 func (m *TopicMgr) listSubscriberCfgsFromEtcd(topic string) ([]*SubscriberCfg, error) {
@@ -424,10 +649,13 @@ func (m *TopicMgr) listSubscriberCfgsFromEtcd(topic string) ([]*SubscriberCfg, e
 	var cfgs []*SubscriberCfg
 	for _, kv := range getResp.Kvs {
 		var cfg SubscriberCfg
+
 		err = json.Unmarshal(kv.Value, &cfg)
 		if err != nil {
 			return nil, err
 		}
+
+		cfg.version = kv.Version
 
 		cfgs = append(cfgs, &cfg)
 	}
@@ -435,42 +663,46 @@ func (m *TopicMgr) listSubscriberCfgsFromEtcd(topic string) ([]*SubscriberCfg, e
 	return cfgs, nil
 }
 
-func (m *TopicMgr) querySubscriberCfgFromEtcd(topic, subscriber string) (*SubscriberCfg, int64, bool, error) {
+func (m *TopicMgr) querySubscriberCfgFromEtcd(topic, subscriber string) (*SubscriberCfg, bool, error) {
 	getResp, err := m.etcdCli.Get(context.Background(), m.subscriberToEtcdKey(topic, subscriber))
 	if err != nil {
-		return nil, 0, false, err
+		return nil, false, err
 	}
 
 	if len(getResp.Kvs) == 0 {
-		return nil, 0, false, nil
+		return nil, false, nil
 	}
 
 	var cfg SubscriberCfg
 	err = json.Unmarshal(getResp.Kvs[0].Value, &cfg)
 	if err != nil {
-		return nil, 0, false, err
+		return nil, false, err
 	}
 
-	return &cfg, getResp.Kvs[0].Version, true, nil
+	cfg.version = getResp.Kvs[0].Version
+
+	return &cfg, true, nil
 }
 
-func (m *TopicMgr) queryTopicCfgFromEtcd(topic string) (*TopicCfg, int64, bool, error) {
+func (m *TopicMgr) queryTopicCfgFromEtcd(topic string) (*TopicCfg, bool, error) {
 	getResp, err := m.etcdCli.Get(context.Background(), m.topicToEtcdKey(topic))
 	if err != nil {
-		return nil, 0, false, err
+		return nil, false, err
 	}
 
 	if len(getResp.Kvs) == 0 {
-		return nil, 0, false, nil
+		return nil, false, nil
 	}
 
 	var cfg TopicCfg
 	err = json.Unmarshal(getResp.Kvs[0].Value, &cfg)
 	if err != nil {
-		return nil, 0, false, err
+		return nil, false, err
 	}
 
-	return &cfg, getResp.Kvs[0].Version, true, nil
+	cfg.version = getResp.Kvs[0].ModRevision
+
+	return &cfg, true, nil
 }
 
 func (m *TopicMgr) getSubscriberEtcdKeyPrefix() string {
@@ -493,6 +725,24 @@ func (m *TopicMgr) topicToEtcdKey(topic string) string {
 	return m.getTopicEtcdKeyPrefix() + topic
 }
 
+func (m *TopicMgr) atomicDelTopic(version int64, cfg *TopicCfg) (bool, error) {
+	key := m.topicToEtcdKey(cfg.Name)
+	resp, err := m.etcdCli.
+		Txn(context.Background()).
+		If(clientv3.Compare(clientv3.ModRevision(key), "=", version)).
+		Then(clientv3.OpDelete(key)).
+		Commit()
+	if err != nil {
+		return false, err
+	}
+
+	if resp.Succeeded {
+		cfg.version = resp.Responses[1].GetResponseRange().Kvs[0].ModRevision
+	}
+
+	return resp.Succeeded, nil
+}
+
 func (m *TopicMgr) atomicPersistTopic(version int64, cfg *TopicCfg) (bool, error) {
 	cfgJ, err := json.Marshal(cfg)
 	if err != nil {
@@ -502,11 +752,15 @@ func (m *TopicMgr) atomicPersistTopic(version int64, cfg *TopicCfg) (bool, error
 	key := m.topicToEtcdKey(cfg.Name)
 	resp, err := m.etcdCli.
 		Txn(context.Background()).
-		If(clientv3.Compare(clientv3.Version(key), "=", version)).
+		If(clientv3.Compare(clientv3.ModRevision(key), "=", version)).
 		Then(clientv3.OpPut(key, string(cfgJ))).
 		Commit()
 	if err != nil {
 		return false, err
+	}
+
+	if resp.Succeeded {
+		cfg.version = resp.Responses[1].GetResponseRange().Kvs[0].ModRevision
 	}
 
 	return resp.Succeeded, nil
@@ -521,11 +775,15 @@ func (m *TopicMgr) atomicPersistSubscriber(version int64, cfg *SubscriberCfg) (b
 	key := m.subscriberToEtcdKey(cfg.Topic, cfg.Name)
 	resp, err := m.etcdCli.
 		Txn(context.Background()).
-		If(clientv3.Compare(clientv3.Version(key), "=", version)).
+		If(clientv3.Compare(clientv3.ModRevision(key), "=", version)).
 		Then(clientv3.OpPut(key, string(cfgJ))).
 		Commit()
 	if err != nil {
 		return false, err
+	}
+
+	if resp.Succeeded {
+		cfg.version = resp.Responses[1].GetResponseRange().Kvs[0].ModRevision
 	}
 
 	return resp.Succeeded, nil

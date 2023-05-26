@@ -10,8 +10,10 @@ require (
 	github.com/995933447/microgosuit v0.0.0-20230518123133-ef190ad0e47b
 	github.com/995933447/runtimeutil v0.0.0-20230427124214-00d5b30c3fd6
 	github.com/995933447/std-go v0.0.0-20220806175833-ab3496c0b696
+	github.com/fsnotify/fsnotify v1.6.0
 	github.com/golang/protobuf v1.5.3
 	github.com/golang/snappy v0.0.4
+	github.com/google/uuid v1.3.0
 	github.com/gzjjyz/micro v0.0.2
 	github.com/huandu/skiplist v1.2.0
 	go.etcd.io/etcd/client/v3 v3.5.9
@@ -27,7 +29,6 @@ require (
 	github.com/coreos/go-semver v0.3.1 // indirect
 	github.com/coreos/go-systemd/v22 v22.3.2 // indirect
 	github.com/gogo/protobuf v1.3.2 // indirect
-	github.com/google/uuid v1.3.0 // indirect
 	github.com/gzjjyz/srvlib v0.2.0 // indirect
 	github.com/howeyc/fsnotify v0.9.0 // indirect
 	github.com/huandu/go-clone v1.6.0 // indirect

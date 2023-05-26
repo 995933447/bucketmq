@@ -13,6 +13,11 @@ service Broker {
     rpc Pub(PubReq) returns (PubResp) {}
 }
 
+message Node {
+    string node_grp = 1;
+    bool is_master = 2;
+}
+
 message Topic {
     string topic = 1;
     string node_grp  = 2;
@@ -65,9 +70,4 @@ message PubReq {
 }
 
 message PubResp {
-}
-
-message Node {
-    string node_grp = 1;
-    bool is_master = 2;
 }
