@@ -22,4 +22,5 @@ message SyncMsgFileLogItem {
     bytes file_buf = 3;
     MsgFileType msg_file_type = 4;
     string file_name = 5;
+    uint32 created_at = 6;
 }

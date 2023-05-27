@@ -1,13 +1,10 @@
 package synclog
 
 import (
-	"encoding/binary"
 	"errors"
 	"github.com/995933447/bucketmq/internal/util"
 	"github.com/995933447/bucketmq/pkg/rpc/ha"
 	"github.com/fsnotify/fsnotify"
-	"github.com/golang/protobuf/proto"
-	"io"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -256,7 +253,6 @@ func (c *Consumer) consumeBatch() ([]*ha.SyncMsgFileLogItem, bool, error) {
 		items          []*ha.SyncMsgFileLogItem
 		pendings       []*pendingMsgIdx
 		totalDataBytes int
-		bin            = binary.LittleEndian
 	)
 	for {
 		if totalDataBytes > 2*1024*1024 {
@@ -267,53 +263,7 @@ func (c *Consumer) consumeBatch() ([]*ha.SyncMsgFileLogItem, bool, error) {
 			break
 		}
 
-		idxBuf := make([]byte, idxBytes)
-		seekIdxBufOffset := c.nextIdxCursor * idxBytes
-		var isEOF bool
-		_, err := c.idxFp.ReadAt(idxBuf, int64(seekIdxBufOffset))
-		if err != nil {
-			if err != io.EOF {
-				return nil, false, err
-			}
-			isEOF = true
-		}
-
-		if len(idxBuf) == 0 {
-			break
-		}
-
-		boundaryBegin := bin.Uint16(idxBuf[:bufBoundaryBytes])
-		boundaryEnd := bin.Uint16(idxBuf[idxBytes-bufBoundaryBytes:])
-		if boundaryBegin != bufBoundaryBegin || boundaryEnd != bufBoundaryEnd {
-			return nil, false, errFileCorrupted
-		}
-
-		offset := bin.Uint32(idxBuf[bufBoundaryBytes+4 : bufBoundaryBytes+8])
-		dataBytes := bin.Uint32(idxBuf[bufBoundaryBytes+8 : bufBoundaryBytes+12])
-
-		dataBuf := make([]byte, dataBytes)
-		_, err = c.dataFp.ReadAt(dataBuf, int64(offset))
-		if err != nil {
-			if err != io.EOF {
-				return nil, false, err
-			}
-			isEOF = true
-		}
-
-		if len(dataBuf) == 0 {
-			break
-		}
-
-		boundaryBegin = bin.Uint16(dataBuf[:bufBoundaryBytes])
-		boundaryEnd = bin.Uint16(dataBuf[dataBytes-bufBoundaryBytes:])
-		if boundaryBegin != bufBoundaryBegin || boundaryEnd != bufBoundaryEnd {
-			return nil, false, errFileCorrupted
-		}
-
-		data := dataBuf[bufBoundaryBytes : dataBytes-bufBoundaryBytes]
-
-		var item ha.SyncMsgFileLogItem
-		err = proto.Unmarshal(data, &item)
+		item, hasMore, err := ReadLogItem(c.idxFp, c.dataFp, c.nextIdxCursor)
 		if err != nil {
 			return nil, false, err
 		}
@@ -323,12 +273,12 @@ func (c *Consumer) consumeBatch() ([]*ha.SyncMsgFileLogItem, bool, error) {
 				idxOffset: c.nextIdxCursor,
 			})
 
-			items = append(items, &item)
+			items = append(items, item)
 
-			totalDataBytes += len(data)
+			totalDataBytes += len(item.FileBuf)
 		}
 
-		if isEOF {
+		if !hasMore {
 			break
 		}
 

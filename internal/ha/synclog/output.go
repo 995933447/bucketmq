@@ -154,7 +154,7 @@ func (o *output) write(msgList []*ha.SyncMsgFileLogItem) error {
 
 		bin.PutUint16(idxBuf[:bufBoundaryBytes], bufBoundaryBegin)
 		idxBuf = idxBuf[bufBoundaryBytes:]
-		bin.PutUint32(idxBuf[0:4], uint32(time.Now().Unix())) // created at
+		bin.PutUint32(idxBuf[0:4], msg.CreatedAt)             // created at
 		bin.PutUint32(idxBuf[4:8], dataBufOffset)             // offset
 		bin.PutUint32(idxBuf[8:12], uint32(dataItemBufBytes)) // size
 		bin.PutUint64(idxBuf[12:20], o.curMaxMsgId+uint64(i+1))

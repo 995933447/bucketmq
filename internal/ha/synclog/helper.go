@@ -1,7 +1,11 @@
 package synclog
 
 import (
+	"encoding/binary"
 	"fmt"
+	"github.com/995933447/bucketmq/pkg/rpc/ha"
+	"github.com/golang/protobuf/proto"
+	"io"
 	"os"
 	"strings"
 	"time"
@@ -64,6 +68,10 @@ func makeIdxFp(baseDir string, flag int) (*os.File, error) {
 			continue
 		}
 
+		if !strings.Contains(file.Name(), time.Now().Format("2006010215")) {
+			continue
+		}
+
 		return os.OpenFile(dir+"/"+file.Name(), flag, os.ModePerm)
 	}
 
@@ -83,6 +91,10 @@ func makeDataFp(baseDir string, flag int) (*os.File, error) {
 
 	for _, file := range files {
 		if !strings.HasSuffix(file.Name(), dataFileSuffix) {
+			continue
+		}
+
+		if !strings.Contains(file.Name(), time.Now().Format("2006010215")) {
 			continue
 		}
 
@@ -197,4 +209,59 @@ func makePendingRcFps(baseDir string) (*os.File, *os.File, error) {
 	}
 
 	return pendingFp, unPendFp, nil
+}
+
+func ReadLogItem(idxFp, dataFp *os.File, idxOffset uint64) (*ha.SyncMsgFileLogItem, bool, error) {
+	idxBuf := make([]byte, idxBytes)
+	seekIdxBufOffset := idxOffset * idxBytes
+	hasMore := true
+	_, err := idxFp.ReadAt(idxBuf, int64(seekIdxBufOffset))
+	if err != nil {
+		if err != io.EOF {
+			return nil, false, err
+		}
+		hasMore = false
+	}
+
+	if len(idxBuf) == 0 {
+		return nil, hasMore, nil
+	}
+
+	boundaryBegin := binary.LittleEndian.Uint16(idxBuf[:bufBoundaryBytes])
+	boundaryEnd := binary.LittleEndian.Uint16(idxBuf[idxBytes-bufBoundaryBytes:])
+	if boundaryBegin != bufBoundaryBegin || boundaryEnd != bufBoundaryEnd {
+		return nil, false, errFileCorrupted
+	}
+
+	offset := binary.LittleEndian.Uint32(idxBuf[bufBoundaryBytes+4 : bufBoundaryBytes+8])
+	dataBytes := binary.LittleEndian.Uint32(idxBuf[bufBoundaryBytes+8 : bufBoundaryBytes+12])
+
+	dataBuf := make([]byte, dataBytes)
+	_, err = dataFp.ReadAt(dataBuf, int64(offset))
+	if err != nil {
+		if err != io.EOF {
+			return nil, false, err
+		}
+		hasMore = false
+	}
+
+	if len(dataBuf) == 0 {
+		return nil, hasMore, nil
+	}
+
+	boundaryBegin = binary.LittleEndian.Uint16(dataBuf[:bufBoundaryBytes])
+	boundaryEnd = binary.LittleEndian.Uint16(dataBuf[dataBytes-bufBoundaryBytes:])
+	if boundaryBegin != bufBoundaryBegin || boundaryEnd != bufBoundaryEnd {
+		return nil, false, errFileCorrupted
+	}
+
+	data := dataBuf[bufBoundaryBytes : dataBytes-bufBoundaryBytes]
+
+	var item ha.SyncMsgFileLogItem
+	err = proto.Unmarshal(data, &item)
+	if err != nil {
+		return nil, false, err
+	}
+
+	return &item, hasMore, nil
 }

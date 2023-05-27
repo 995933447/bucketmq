@@ -112,7 +112,9 @@ func (o *output) write(msgList []*Msg) error {
 		return nil
 	}
 
-	if o.idxFp == nil || o.dataFp == nil || !o.isAtSameHourSinceLastOpenFile() {
+	now := time.Now()
+
+	if o.idxFp == nil || o.dataFp == nil || o.openFileTime.Format("2006010215") != now.Format("2006010215") {
 		if err := o.openNewFile(); err != nil {
 			return err
 		}
@@ -204,7 +206,7 @@ func (o *output) write(msgList []*Msg) error {
 
 			bin.PutUint16(idxBuf[:bufBoundaryBytes], bufBoundaryBegin)
 			idxBuf = idxBuf[bufBoundaryBytes:]
-			bin.PutUint32(idxBuf[0:4], uint32(time.Now().Unix())) // created at
+			bin.PutUint32(idxBuf[0:4], uint32(now.Unix()))        // created at
 			bin.PutUint32(idxBuf[4:8], dataBufOffset)             // offset
 			bin.PutUint32(idxBuf[8:12], uint32(dataItemBufBytes)) // size
 			idxBuf[12] = compressedFlagInIdx
