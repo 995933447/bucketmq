@@ -9,30 +9,30 @@ import (
 )
 
 func genIdxFileName(baseDir, topic string, seq uint64) string {
-	return fmt.Sprintf("%s/%s_%d"+idxFileSuffix, getTopicFileDir(baseDir, topic), time.Now().Format("2006010215"), seq)
+	return fmt.Sprintf("%s/%s_%d"+IdxFileSuffix, GetTopicFileDir(baseDir, topic), time.Now().Format("2006010215"), seq)
 }
 
 func genDataFileName(baseDir, topic string, seq uint64) string {
-	return fmt.Sprintf("%s/%s_%d"+dataFileSuffix, getTopicFileDir(baseDir, topic), time.Now().Format("2006010215"), seq)
+	return fmt.Sprintf("%s/%s_%d"+DataFileSuffix, GetTopicFileDir(baseDir, topic), time.Now().Format("2006010215"), seq)
 }
 
 func genFinishRcFileName(baseDir, topic, subscriber string) string {
-	return fmt.Sprintf("%s/%s"+finishFileSuffix, getSubscriberFileDir(baseDir, topic, subscriber), time.Now().Format("2006010215"))
+	return fmt.Sprintf("%s/%s"+FinishFileSuffix, GetSubscriberFileDir(baseDir, topic, subscriber), time.Now().Format("2006010215"))
 }
 
 func genMsgIdFileName(baseDir, topic string) string {
-	return fmt.Sprintf("%s/%s"+msgIdFileSuffix, getTopicFileDir(baseDir, topic), time.Now().Format("2006010215"))
+	return fmt.Sprintf("%s/%s"+MsgIdFileSuffix, GetTopicFileDir(baseDir, topic), time.Now().Format("2006010215"))
 }
 
 func genLoadBootFileName(baseDir, topic, subscriber string) string {
-	return fmt.Sprintf("%s/%s"+loadBootFileSuffix, getSubscriberFileDir(baseDir, topic, subscriber), time.Now().Format("2006010215"))
+	return fmt.Sprintf("%s/%s"+LoadBootFileSuffix, GetSubscriberFileDir(baseDir, topic, subscriber), time.Now().Format("2006010215"))
 }
 
-func getTopicFileDir(baseDir, topic string) string {
+func GetTopicFileDir(baseDir, topic string) string {
 	return fmt.Sprintf("%s/%s", baseDir, topic)
 }
 
-func getSubscriberFileDir(baseDir, topic, subscriber string) string {
+func GetSubscriberFileDir(baseDir, topic, subscriber string) string {
 	return fmt.Sprintf("%s/%s/%s", baseDir, topic, subscriber)
 }
 
@@ -50,7 +50,7 @@ func mkdirIfNotExist(dir string) error {
 }
 
 func makeSeqIdxFp(baseDir, topic string, seq uint64, flag int) (*os.File, error) {
-	dir := getTopicFileDir(baseDir, topic)
+	dir := GetTopicFileDir(baseDir, topic)
 	if err := mkdirIfNotExist(dir); err != nil {
 		return nil, err
 	}
@@ -61,7 +61,7 @@ func makeSeqIdxFp(baseDir, topic string, seq uint64, flag int) (*os.File, error)
 	}
 
 	for _, file := range files {
-		if !strings.HasSuffix(file.Name(), idxFileSuffix) {
+		if !strings.HasSuffix(file.Name(), IdxFileSuffix) {
 			continue
 		}
 
@@ -90,7 +90,7 @@ func makeSeqIdxFp(baseDir, topic string, seq uint64, flag int) (*os.File, error)
 }
 
 func makeSeqDataFp(baseDir, topic string, seq uint64, flag int) (*os.File, error) {
-	dir := getTopicFileDir(baseDir, topic)
+	dir := GetTopicFileDir(baseDir, topic)
 	if err := mkdirIfNotExist(dir); err != nil {
 		return nil, err
 	}
@@ -101,7 +101,7 @@ func makeSeqDataFp(baseDir, topic string, seq uint64, flag int) (*os.File, error
 	}
 
 	for _, file := range files {
-		if !strings.HasSuffix(file.Name(), dataFileSuffix) {
+		if !strings.HasSuffix(file.Name(), DataFileSuffix) {
 			continue
 		}
 
@@ -130,7 +130,7 @@ func makeSeqDataFp(baseDir, topic string, seq uint64, flag int) (*os.File, error
 }
 
 func makeLoadBootFp(baseDir, topic, subscriber string) (*os.File, error) {
-	dir := getSubscriberFileDir(baseDir, topic, subscriber)
+	dir := GetSubscriberFileDir(baseDir, topic, subscriber)
 
 	if err := mkdirIfNotExist(dir); err != nil {
 		return nil, err
@@ -142,7 +142,7 @@ func makeLoadBootFp(baseDir, topic, subscriber string) (*os.File, error) {
 	}
 
 	for _, file := range files {
-		if !strings.HasSuffix(file.Name(), loadBootFileSuffix) {
+		if !strings.HasSuffix(file.Name(), FinishFileSuffix) {
 			continue
 		}
 
@@ -158,7 +158,7 @@ func makeLoadBootFp(baseDir, topic, subscriber string) (*os.File, error) {
 }
 
 func makeMsgIdFp(baseDir, topic string) (*os.File, bool, error) {
-	dir := getTopicFileDir(baseDir, topic)
+	dir := GetTopicFileDir(baseDir, topic)
 
 	if err := mkdirIfNotExist(dir); err != nil {
 		return nil, false, err
@@ -170,7 +170,7 @@ func makeMsgIdFp(baseDir, topic string) (*os.File, bool, error) {
 	}
 
 	for _, file := range files {
-		if !strings.HasSuffix(file.Name(), msgIdFileSuffix) {
+		if !strings.HasSuffix(file.Name(), MsgIdFileSuffix) {
 			continue
 		}
 
@@ -191,7 +191,7 @@ func makeMsgIdFp(baseDir, topic string) (*os.File, bool, error) {
 }
 
 func makeFinishRcFp(baseDir, topic, subscriber string) (*os.File, error) {
-	dir := getSubscriberFileDir(baseDir, topic, subscriber)
+	dir := GetSubscriberFileDir(baseDir, topic, subscriber)
 
 	if err := mkdirIfNotExist(dir); err != nil {
 		return nil, err
@@ -203,7 +203,7 @@ func makeFinishRcFp(baseDir, topic, subscriber string) (*os.File, error) {
 	}
 
 	for _, file := range files {
-		if !strings.HasSuffix(file.Name(), finishFileSuffix) {
+		if !strings.HasSuffix(file.Name(), FinishFileSuffix) {
 			continue
 		}
 
@@ -219,7 +219,7 @@ func makeFinishRcFp(baseDir, topic, subscriber string) (*os.File, error) {
 }
 
 func scanDirToParseOldestSeq(baseDir, topic string) (uint64, error) {
-	dir := getTopicFileDir(baseDir, topic)
+	dir := GetTopicFileDir(baseDir, topic)
 
 	if err := mkdirIfNotExist(dir); err != nil {
 		return 0, err
@@ -251,7 +251,7 @@ func scanDirToParseOldestSeq(baseDir, topic string) (uint64, error) {
 }
 
 func scanDirToParseNewestSeq(baseDir, topic string) (uint64, error) {
-	dir := getTopicFileDir(baseDir, topic)
+	dir := GetTopicFileDir(baseDir, topic)
 
 	if err := mkdirIfNotExist(dir); err != nil {
 		return 0, err
@@ -286,7 +286,7 @@ func scanDirToParseNewestSeq(baseDir, topic string) (uint64, error) {
 }
 
 func scanDirToParseNextSeq(baseDir, topic string, seq uint64) (uint64, error) {
-	dir := getTopicFileDir(baseDir, topic)
+	dir := GetTopicFileDir(baseDir, topic)
 
 	if err := mkdirIfNotExist(dir); err != nil {
 		return 0, err
@@ -299,7 +299,7 @@ func scanDirToParseNextSeq(baseDir, topic string, seq uint64) (uint64, error) {
 
 	var nextSeq uint64
 	for _, file := range files {
-		if !strings.HasSuffix(file.Name(), idxFileSuffix) {
+		if !strings.HasSuffix(file.Name(), IdxFileSuffix) {
 			continue
 		}
 

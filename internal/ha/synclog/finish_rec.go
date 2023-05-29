@@ -2,14 +2,21 @@ package synclog
 
 import (
 	"encoding/binary"
+	"fmt"
 	"github.com/995933447/bucketmq/internal/util"
 	"os"
 )
 
-const finishRcSuffix = ".fin"
+//  no seq  | data time seq |     index num
+//
+//	  8     |   10          |      8
 
 const (
-	finishWaterMarkBytes = 8
+	finishRcSuffix                    = ".fin"
+	finishWaterMarkBytes              = 26
+	nOSeqInFinishWaterMarkBytes       = 8
+	dateTimeSeqInFinishWaterMarkBytes = 10
+	idxNumInFinishWaterMarkBytes      = 8
 )
 
 func newConsumeWaterMarkRec(baseDir string) (*ConsumeWaterMarkRec, error) {
@@ -17,10 +24,15 @@ func newConsumeWaterMarkRec(baseDir string) (*ConsumeWaterMarkRec, error) {
 		baseDir: baseDir,
 	}
 
+	dir := fmt.Sprintf(GetHADataDir(baseDir))
+	if err := mkdirIfNotExist(dir); err != nil {
+		return nil, err
+	}
+
 	var (
 		err error
 	)
-	rec.fp, err = makeFinishRcFp(baseDir)
+	rec.fp, err = makeFinishRcFp(dir)
 	if err != nil {
 		return nil, err
 	}
@@ -31,24 +43,34 @@ func newConsumeWaterMarkRec(baseDir string) (*ConsumeWaterMarkRec, error) {
 	}
 
 	if fileState.Size() <= 0 {
-		err = rec.updateWaterMark(0)
+		nOSeq, dateTimeSeq, err := scanDirToParseOldestSeq(baseDir)
 		if err != nil {
 			return nil, err
 		}
-	} else if _, err = rec.refreshAndGetOffset(); err != nil {
+
+		rec.nOSeq = nOSeq
+		rec.dateTimeSeq = dateTimeSeq
+		if rec.nOSeq != 0 {
+			err = rec.updateWaterMark(rec.nOSeq, dateTimeSeq, 0)
+		}
+	} else if _, _, _, err = rec.refreshAndGetOffset(); err != nil {
 		return nil, err
 	}
 
-	rec.idxFp, err = makeIdxFp(baseDir, os.O_CREATE|os.O_RDONLY)
-	if err != nil {
-		return nil, err
+	if rec.nOSeq != 0 && rec.dateTimeSeq != "" {
+		rec.idxFp, err = MakeSeqIdxFp(baseDir, rec.dateTimeSeq, rec.nOSeq, os.O_CREATE|os.O_RDONLY)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return rec, nil
 }
 
 type FinishWaterMark struct {
-	idxNum uint64
+	nOSeq       uint64
+	dateTimeSeq string
+	idxNum      uint64
 }
 
 type ConsumeWaterMarkRec struct {
@@ -59,7 +81,16 @@ type ConsumeWaterMarkRec struct {
 	FinishWaterMark
 }
 
-func (r *ConsumeWaterMarkRec) isFinished() (bool, error) {
+func (r *ConsumeWaterMarkRec) isOffsetsFinishedInSeq() (bool, error) {
+	newestNOSeq, _, err := scanDirToParseNewestSeq(r.baseDir)
+	if err != nil {
+		return false, err
+	}
+
+	if newestNOSeq == r.nOSeq {
+		return false, nil
+	}
+
 	idxFileState, err := r.idxFp.Stat()
 	if err != nil {
 		return false, err
@@ -68,10 +99,10 @@ func (r *ConsumeWaterMarkRec) isFinished() (bool, error) {
 	return idxFileState.Size()/idxBytes == int64(r.idxNum), nil
 }
 
-func (r *ConsumeWaterMarkRec) refreshAndGetOffset() (uint64, error) {
+func (r *ConsumeWaterMarkRec) refreshAndGetOffset() (uint64, string, uint64, error) {
 	n, err := r.fp.Read(r.buf[:])
 	if err != nil {
-		return 0, err
+		return 0, "", 0, err
 	}
 
 	for {
@@ -81,20 +112,22 @@ func (r *ConsumeWaterMarkRec) refreshAndGetOffset() (uint64, error) {
 
 		more, err := r.fp.Read(r.buf[n:])
 		if err != nil {
-			return 0, err
+			return 0, "", 0, err
 		}
 
 		n += more
 	}
 
 	bin := binary.LittleEndian
-	r.idxNum = bin.Uint64(r.buf[:])
+	r.nOSeq = bin.Uint64(r.buf[:nOSeqInFinishWaterMarkBytes])
+	r.dateTimeSeq = string(r.buf[nOSeqInFinishWaterMarkBytes : nOSeqInFinishWaterMarkBytes+dateTimeSeqInFinishWaterMarkBytes])
+	r.idxNum = bin.Uint64(r.buf[nOSeqInFinishWaterMarkBytes+dateTimeSeqInFinishWaterMarkBytes:])
 
-	return r.idxNum, nil
+	return r.nOSeq, r.dateTimeSeq, r.idxNum, nil
 }
 
-func (r *ConsumeWaterMarkRec) getWaterMark() uint64 {
-	return r.idxNum
+func (r *ConsumeWaterMarkRec) getWaterMark() (uint64, string, uint64) {
+	return r.nOSeq, r.dateTimeSeq, r.idxNum
 }
 
 func (r *ConsumeWaterMarkRec) syncDisk() {
@@ -103,11 +136,29 @@ func (r *ConsumeWaterMarkRec) syncDisk() {
 	}
 }
 
-func (r *ConsumeWaterMarkRec) updateWaterMark(idxNum uint64) error {
+func (r *ConsumeWaterMarkRec) updateWaterMark(nOSeq uint64, dateTimeSeq string, idxNum uint64) error {
 	var err error
+	if nOSeq != r.nOSeq {
+		r.idxFp, err = MakeSeqIdxFp(r.baseDir, dateTimeSeq, nOSeq, os.O_RDONLY)
+		if err != nil {
+			return err
+		}
+
+		idxFileState, err := r.idxFp.Stat()
+		if err != nil {
+			return err
+		}
+
+		maxIdxNum := uint64(idxFileState.Size() / idxBytes)
+		if maxIdxNum < idxNum {
+			idxNum = maxIdxNum
+		}
+	}
 
 	bin := binary.LittleEndian
-	bin.PutUint64(r.buf[:], idxNum)
+	bin.PutUint64(r.buf[:nOSeqInFinishWaterMarkBytes], nOSeq)
+	copy(r.buf[nOSeqInFinishWaterMarkBytes:nOSeqInFinishWaterMarkBytes+dateTimeSeqInFinishWaterMarkBytes], dateTimeSeq)
+	bin.PutUint64(r.buf[nOSeqInFinishWaterMarkBytes+dateTimeSeqInFinishWaterMarkBytes:], idxNum)
 	n, err := r.fp.WriteAt(r.buf[:], 0)
 	if err != nil {
 		return err
@@ -124,7 +175,7 @@ func (r *ConsumeWaterMarkRec) updateWaterMark(idxNum uint64) error {
 		n += more
 	}
 
-	r.idxNum = idxNum
+	r.nOSeq, r.dateTimeSeq, r.idxNum = nOSeq, dateTimeSeq, idxNum
 
 	return nil
 }

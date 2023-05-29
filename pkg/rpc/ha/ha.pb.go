@@ -7,6 +7,11 @@ import proto "github.com/golang/protobuf/proto"
 import fmt "fmt"
 import math "math"
 
+import (
+	context "golang.org/x/net/context"
+	grpc "google.golang.org/grpc"
+)
+
 // Reference imports to suppress errors if they are not otherwise used.
 var _ = proto.Marshal
 var _ = fmt.Errorf
@@ -50,7 +55,61 @@ func (x MsgFileType) String() string {
 	return proto.EnumName(MsgFileType_name, int32(x))
 }
 func (MsgFileType) EnumDescriptor() ([]byte, []int) {
-	return fileDescriptor_ha_edea174a99d6202a, []int{0}
+	return fileDescriptor_ha_5038a62bb020d02f, []int{0}
+}
+
+type Node struct {
+	NodeGrp              string   `protobuf:"bytes,1,opt,name=node_grp,json=nodeGrp,proto3" json:"node_grp,omitempty"`
+	IsMaster             bool     `protobuf:"varint,2,opt,name=is_master,json=isMaster,proto3" json:"is_master,omitempty"`
+	MaxSyncedLogId       uint64   `protobuf:"varint,3,opt,name=max_synced_log_id,json=maxSyncedLogId,proto3" json:"max_synced_log_id,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *Node) Reset()         { *m = Node{} }
+func (m *Node) String() string { return proto.CompactTextString(m) }
+func (*Node) ProtoMessage()    {}
+func (*Node) Descriptor() ([]byte, []int) {
+	return fileDescriptor_ha_5038a62bb020d02f, []int{0}
+}
+func (m *Node) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_Node.Unmarshal(m, b)
+}
+func (m *Node) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_Node.Marshal(b, m, deterministic)
+}
+func (dst *Node) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_Node.Merge(dst, src)
+}
+func (m *Node) XXX_Size() int {
+	return xxx_messageInfo_Node.Size(m)
+}
+func (m *Node) XXX_DiscardUnknown() {
+	xxx_messageInfo_Node.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_Node proto.InternalMessageInfo
+
+func (m *Node) GetNodeGrp() string {
+	if m != nil {
+		return m.NodeGrp
+	}
+	return ""
+}
+
+func (m *Node) GetIsMaster() bool {
+	if m != nil {
+		return m.IsMaster
+	}
+	return false
+}
+
+func (m *Node) GetMaxSyncedLogId() uint64 {
+	if m != nil {
+		return m.MaxSyncedLogId
+	}
+	return 0
 }
 
 type SyncMsgFileLogItem struct {
@@ -60,6 +119,7 @@ type SyncMsgFileLogItem struct {
 	MsgFileType          MsgFileType `protobuf:"varint,4,opt,name=msg_file_type,json=msgFileType,proto3,enum=broker.MsgFileType" json:"msg_file_type,omitempty"`
 	FileName             string      `protobuf:"bytes,5,opt,name=file_name,json=fileName,proto3" json:"file_name,omitempty"`
 	CreatedAt            uint32      `protobuf:"varint,6,opt,name=created_at,json=createdAt,proto3" json:"created_at,omitempty"`
+	LogId                uint64      `protobuf:"varint,7,opt,name=log_id,json=logId,proto3" json:"log_id,omitempty"`
 	XXX_NoUnkeyedLiteral struct{}    `json:"-"`
 	XXX_unrecognized     []byte      `json:"-"`
 	XXX_sizecache        int32       `json:"-"`
@@ -69,7 +129,7 @@ func (m *SyncMsgFileLogItem) Reset()         { *m = SyncMsgFileLogItem{} }
 func (m *SyncMsgFileLogItem) String() string { return proto.CompactTextString(m) }
 func (*SyncMsgFileLogItem) ProtoMessage()    {}
 func (*SyncMsgFileLogItem) Descriptor() ([]byte, []int) {
-	return fileDescriptor_ha_edea174a99d6202a, []int{0}
+	return fileDescriptor_ha_5038a62bb020d02f, []int{1}
 }
 func (m *SyncMsgFileLogItem) XXX_Unmarshal(b []byte) error {
 	return xxx_messageInfo_SyncMsgFileLogItem.Unmarshal(m, b)
@@ -131,34 +191,316 @@ func (m *SyncMsgFileLogItem) GetCreatedAt() uint32 {
 	return 0
 }
 
+func (m *SyncMsgFileLogItem) GetLogId() uint64 {
+	if m != nil {
+		return m.LogId
+	}
+	return 0
+}
+
+type SyncRemoteReplicaReq struct {
+	LogItems             []*SyncMsgFileLogItem `protobuf:"bytes,1,rep,name=log_items,json=logItems,proto3" json:"log_items,omitempty"`
+	LastSyncedLogId      uint64                `protobuf:"varint,2,opt,name=last_synced_log_id,json=lastSyncedLogId,proto3" json:"last_synced_log_id,omitempty"`
+	XXX_NoUnkeyedLiteral struct{}              `json:"-"`
+	XXX_unrecognized     []byte                `json:"-"`
+	XXX_sizecache        int32                 `json:"-"`
+}
+
+func (m *SyncRemoteReplicaReq) Reset()         { *m = SyncRemoteReplicaReq{} }
+func (m *SyncRemoteReplicaReq) String() string { return proto.CompactTextString(m) }
+func (*SyncRemoteReplicaReq) ProtoMessage()    {}
+func (*SyncRemoteReplicaReq) Descriptor() ([]byte, []int) {
+	return fileDescriptor_ha_5038a62bb020d02f, []int{2}
+}
+func (m *SyncRemoteReplicaReq) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_SyncRemoteReplicaReq.Unmarshal(m, b)
+}
+func (m *SyncRemoteReplicaReq) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_SyncRemoteReplicaReq.Marshal(b, m, deterministic)
+}
+func (dst *SyncRemoteReplicaReq) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_SyncRemoteReplicaReq.Merge(dst, src)
+}
+func (m *SyncRemoteReplicaReq) XXX_Size() int {
+	return xxx_messageInfo_SyncRemoteReplicaReq.Size(m)
+}
+func (m *SyncRemoteReplicaReq) XXX_DiscardUnknown() {
+	xxx_messageInfo_SyncRemoteReplicaReq.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_SyncRemoteReplicaReq proto.InternalMessageInfo
+
+func (m *SyncRemoteReplicaReq) GetLogItems() []*SyncMsgFileLogItem {
+	if m != nil {
+		return m.LogItems
+	}
+	return nil
+}
+
+func (m *SyncRemoteReplicaReq) GetLastSyncedLogId() uint64 {
+	if m != nil {
+		return m.LastSyncedLogId
+	}
+	return 0
+}
+
+type SyncRemoteReplicaResp struct {
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *SyncRemoteReplicaResp) Reset()         { *m = SyncRemoteReplicaResp{} }
+func (m *SyncRemoteReplicaResp) String() string { return proto.CompactTextString(m) }
+func (*SyncRemoteReplicaResp) ProtoMessage()    {}
+func (*SyncRemoteReplicaResp) Descriptor() ([]byte, []int) {
+	return fileDescriptor_ha_5038a62bb020d02f, []int{3}
+}
+func (m *SyncRemoteReplicaResp) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_SyncRemoteReplicaResp.Unmarshal(m, b)
+}
+func (m *SyncRemoteReplicaResp) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_SyncRemoteReplicaResp.Marshal(b, m, deterministic)
+}
+func (dst *SyncRemoteReplicaResp) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_SyncRemoteReplicaResp.Merge(dst, src)
+}
+func (m *SyncRemoteReplicaResp) XXX_Size() int {
+	return xxx_messageInfo_SyncRemoteReplicaResp.Size(m)
+}
+func (m *SyncRemoteReplicaResp) XXX_DiscardUnknown() {
+	xxx_messageInfo_SyncRemoteReplicaResp.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_SyncRemoteReplicaResp proto.InternalMessageInfo
+
+type PullRemoteReplicaReq struct {
+	LastSyncedLogId      uint64   `protobuf:"varint,2,opt,name=last_synced_log_id,json=lastSyncedLogId,proto3" json:"last_synced_log_id,omitempty"`
+	XXX_NoUnkeyedLiteral struct{} `json:"-"`
+	XXX_unrecognized     []byte   `json:"-"`
+	XXX_sizecache        int32    `json:"-"`
+}
+
+func (m *PullRemoteReplicaReq) Reset()         { *m = PullRemoteReplicaReq{} }
+func (m *PullRemoteReplicaReq) String() string { return proto.CompactTextString(m) }
+func (*PullRemoteReplicaReq) ProtoMessage()    {}
+func (*PullRemoteReplicaReq) Descriptor() ([]byte, []int) {
+	return fileDescriptor_ha_5038a62bb020d02f, []int{4}
+}
+func (m *PullRemoteReplicaReq) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_PullRemoteReplicaReq.Unmarshal(m, b)
+}
+func (m *PullRemoteReplicaReq) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_PullRemoteReplicaReq.Marshal(b, m, deterministic)
+}
+func (dst *PullRemoteReplicaReq) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_PullRemoteReplicaReq.Merge(dst, src)
+}
+func (m *PullRemoteReplicaReq) XXX_Size() int {
+	return xxx_messageInfo_PullRemoteReplicaReq.Size(m)
+}
+func (m *PullRemoteReplicaReq) XXX_DiscardUnknown() {
+	xxx_messageInfo_PullRemoteReplicaReq.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_PullRemoteReplicaReq proto.InternalMessageInfo
+
+func (m *PullRemoteReplicaReq) GetLastSyncedLogId() uint64 {
+	if m != nil {
+		return m.LastSyncedLogId
+	}
+	return 0
+}
+
+type PullRemoteReplicaResp struct {
+	LogItems             []*SyncMsgFileLogItem `protobuf:"bytes,1,rep,name=log_items,json=logItems,proto3" json:"log_items,omitempty"`
+	XXX_NoUnkeyedLiteral struct{}              `json:"-"`
+	XXX_unrecognized     []byte                `json:"-"`
+	XXX_sizecache        int32                 `json:"-"`
+}
+
+func (m *PullRemoteReplicaResp) Reset()         { *m = PullRemoteReplicaResp{} }
+func (m *PullRemoteReplicaResp) String() string { return proto.CompactTextString(m) }
+func (*PullRemoteReplicaResp) ProtoMessage()    {}
+func (*PullRemoteReplicaResp) Descriptor() ([]byte, []int) {
+	return fileDescriptor_ha_5038a62bb020d02f, []int{5}
+}
+func (m *PullRemoteReplicaResp) XXX_Unmarshal(b []byte) error {
+	return xxx_messageInfo_PullRemoteReplicaResp.Unmarshal(m, b)
+}
+func (m *PullRemoteReplicaResp) XXX_Marshal(b []byte, deterministic bool) ([]byte, error) {
+	return xxx_messageInfo_PullRemoteReplicaResp.Marshal(b, m, deterministic)
+}
+func (dst *PullRemoteReplicaResp) XXX_Merge(src proto.Message) {
+	xxx_messageInfo_PullRemoteReplicaResp.Merge(dst, src)
+}
+func (m *PullRemoteReplicaResp) XXX_Size() int {
+	return xxx_messageInfo_PullRemoteReplicaResp.Size(m)
+}
+func (m *PullRemoteReplicaResp) XXX_DiscardUnknown() {
+	xxx_messageInfo_PullRemoteReplicaResp.DiscardUnknown(m)
+}
+
+var xxx_messageInfo_PullRemoteReplicaResp proto.InternalMessageInfo
+
+func (m *PullRemoteReplicaResp) GetLogItems() []*SyncMsgFileLogItem {
+	if m != nil {
+		return m.LogItems
+	}
+	return nil
+}
+
 func init() {
+	proto.RegisterType((*Node)(nil), "broker.Node")
 	proto.RegisterType((*SyncMsgFileLogItem)(nil), "broker.SyncMsgFileLogItem")
+	proto.RegisterType((*SyncRemoteReplicaReq)(nil), "broker.SyncRemoteReplicaReq")
+	proto.RegisterType((*SyncRemoteReplicaResp)(nil), "broker.SyncRemoteReplicaResp")
+	proto.RegisterType((*PullRemoteReplicaReq)(nil), "broker.PullRemoteReplicaReq")
+	proto.RegisterType((*PullRemoteReplicaResp)(nil), "broker.PullRemoteReplicaResp")
 	proto.RegisterEnum("broker.MsgFileType", MsgFileType_name, MsgFileType_value)
 }
 
-func init() { proto.RegisterFile("pkg/proto/ha.proto", fileDescriptor_ha_edea174a99d6202a) }
+// Reference imports to suppress errors if they are not otherwise used.
+var _ context.Context
+var _ grpc.ClientConn
 
-var fileDescriptor_ha_edea174a99d6202a = []byte{
-	// 331 bytes of a gzipped FileDescriptorProto
-	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x5c, 0x91, 0x4f, 0x4f, 0xc2, 0x30,
-	0x18, 0xc6, 0x2d, 0xff, 0x94, 0x17, 0xc1, 0xf9, 0x82, 0x71, 0xc6, 0x68, 0x16, 0x4f, 0x0b, 0x87,
-	0x2d, 0x01, 0x0c, 0xe1, 0x08, 0x31, 0x44, 0x12, 0xe0, 0x30, 0x3d, 0x79, 0x21, 0xdd, 0x56, 0xb6,
-	0x06, 0x46, 0xe7, 0xd6, 0x25, 0xf2, 0x2d, 0xfc, 0x7c, 0x7e, 0x1a, 0x43, 0x21, 0xb1, 0xf1, 0xd6,
-	0xdf, 0xef, 0x49, 0xfb, 0x34, 0x79, 0x00, 0xd3, 0x4d, 0xe4, 0xa6, 0x99, 0x90, 0xc2, 0x8d, 0xa9,
-	0xa3, 0x0e, 0x58, 0xf3, 0x33, 0xb1, 0x61, 0xd9, 0xd3, 0x0f, 0x01, 0x7c, 0xdb, 0xef, 0x82, 0x45,
-	0x1e, 0x4d, 0xf9, 0x96, 0xcd, 0x45, 0x34, 0x93, 0x2c, 0xc1, 0x0e, 0x54, 0xa5, 0x48, 0x79, 0x60,
-	0x12, 0x8b, 0xd8, 0x75, 0xef, 0x08, 0xf8, 0x08, 0x90, 0x17, 0x7e, 0x1e, 0x64, 0xdc, 0x67, 0x99,
-	0x59, 0x52, 0x91, 0x66, 0xf0, 0x0e, 0x2e, 0xd6, 0x7c, 0xcb, 0x56, 0x7e, 0xb1, 0x36, 0xcb, 0x16,
-	0xb1, 0x2f, 0xbd, 0xf3, 0x03, 0x4f, 0x8a, 0x35, 0x0e, 0xa1, 0x99, 0xe4, 0xd1, 0x4a, 0xc5, 0x72,
-	0x9f, 0x32, 0xb3, 0x62, 0x11, 0xbb, 0xd5, 0x6b, 0x3b, 0xc7, 0x7f, 0x38, 0xa7, 0xfe, 0xf7, 0x7d,
-	0xca, 0xbc, 0x46, 0xf2, 0x07, 0x78, 0x0f, 0x75, 0x75, 0x69, 0x47, 0x13, 0x66, 0x56, 0x55, 0xa5,
-	0x2a, 0x59, 0xd2, 0x84, 0xe1, 0x03, 0x40, 0x90, 0x31, 0x2a, 0x59, 0xb8, 0xa2, 0xd2, 0xac, 0x59,
-	0xc4, 0x6e, 0x7a, 0xf5, 0x93, 0x19, 0xcb, 0xee, 0x37, 0x81, 0x86, 0xf6, 0x30, 0x22, 0xb4, 0x34,
-	0x5c, 0xf2, 0xad, 0x71, 0xf6, 0xcf, 0xcd, 0xc2, 0x2f, 0x83, 0x60, 0x1b, 0xae, 0x34, 0xf7, 0x42,
-	0x25, 0x35, 0x4a, 0x78, 0x03, 0xd7, 0x9a, 0x9c, 0xf2, 0x1d, 0xcf, 0x63, 0xa3, 0x8c, 0x1d, 0x30,
-	0x34, 0xbd, 0xc8, 0xa3, 0x59, 0x68, 0x54, 0xf0, 0x16, 0xda, 0x9a, 0x9d, 0x0b, 0x1a, 0x4e, 0x84,
-	0x90, 0x46, 0xb5, 0x57, 0x81, 0xd2, 0xeb, 0x78, 0xd2, 0xfd, 0xb0, 0x23, 0x2e, 0xe3, 0xc2, 0x77,
-	0x02, 0x91, 0xb8, 0xa3, 0xd1, 0xf3, 0xa8, 0xdf, 0x1f, 0x0c, 0x86, 0xae, 0x5f, 0x04, 0x1b, 0x26,
-	0x93, 0x4f, 0xf7, 0xb0, 0x58, 0x96, 0x06, 0x6e, 0x4c, 0xfd, 0x9a, 0x1a, 0xac, 0xff, 0x1b, 0x00,
-	0x00, 0xff, 0xff, 0xd9, 0x47, 0x17, 0x94, 0xc6, 0x01, 0x00, 0x00,
+// This is a compile-time assertion to ensure that this generated file
+// is compatible with the grpc package it is being compiled against.
+const _ = grpc.SupportPackageIsVersion4
+
+// HAClient is the client API for HA service.
+//
+// For semantics around ctx use and closing/ending streaming RPCs, please refer to https://godoc.org/google.golang.org/grpc#ClientConn.NewStream.
+type HAClient interface {
+	SyncRemoteReplica(ctx context.Context, in *SyncRemoteReplicaReq, opts ...grpc.CallOption) (*SyncRemoteReplicaResp, error)
+	PullRemoteReplica(ctx context.Context, in *PullRemoteReplicaReq, opts ...grpc.CallOption) (*PullRemoteReplicaResp, error)
+}
+
+type hAClient struct {
+	cc *grpc.ClientConn
+}
+
+func NewHAClient(cc *grpc.ClientConn) HAClient {
+	return &hAClient{cc}
+}
+
+func (c *hAClient) SyncRemoteReplica(ctx context.Context, in *SyncRemoteReplicaReq, opts ...grpc.CallOption) (*SyncRemoteReplicaResp, error) {
+	out := new(SyncRemoteReplicaResp)
+	err := c.cc.Invoke(ctx, "/broker.HA/SyncRemoteReplica", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+func (c *hAClient) PullRemoteReplica(ctx context.Context, in *PullRemoteReplicaReq, opts ...grpc.CallOption) (*PullRemoteReplicaResp, error) {
+	out := new(PullRemoteReplicaResp)
+	err := c.cc.Invoke(ctx, "/broker.HA/PullRemoteReplica", in, out, opts...)
+	if err != nil {
+		return nil, err
+	}
+	return out, nil
+}
+
+// HAServer is the server API for HA service.
+type HAServer interface {
+	SyncRemoteReplica(context.Context, *SyncRemoteReplicaReq) (*SyncRemoteReplicaResp, error)
+	PullRemoteReplica(context.Context, *PullRemoteReplicaReq) (*PullRemoteReplicaResp, error)
+}
+
+func RegisterHAServer(s *grpc.Server, srv HAServer) {
+	s.RegisterService(&_HA_serviceDesc, srv)
+}
+
+func _HA_SyncRemoteReplica_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(SyncRemoteReplicaReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HAServer).SyncRemoteReplica(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/broker.HA/SyncRemoteReplica",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HAServer).SyncRemoteReplica(ctx, req.(*SyncRemoteReplicaReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+func _HA_PullRemoteReplica_Handler(srv interface{}, ctx context.Context, dec func(interface{}) error, interceptor grpc.UnaryServerInterceptor) (interface{}, error) {
+	in := new(PullRemoteReplicaReq)
+	if err := dec(in); err != nil {
+		return nil, err
+	}
+	if interceptor == nil {
+		return srv.(HAServer).PullRemoteReplica(ctx, in)
+	}
+	info := &grpc.UnaryServerInfo{
+		Server:     srv,
+		FullMethod: "/broker.HA/PullRemoteReplica",
+	}
+	handler := func(ctx context.Context, req interface{}) (interface{}, error) {
+		return srv.(HAServer).PullRemoteReplica(ctx, req.(*PullRemoteReplicaReq))
+	}
+	return interceptor(ctx, in, info, handler)
+}
+
+var _HA_serviceDesc = grpc.ServiceDesc{
+	ServiceName: "broker.HA",
+	HandlerType: (*HAServer)(nil),
+	Methods: []grpc.MethodDesc{
+		{
+			MethodName: "SyncRemoteReplica",
+			Handler:    _HA_SyncRemoteReplica_Handler,
+		},
+		{
+			MethodName: "PullRemoteReplica",
+			Handler:    _HA_PullRemoteReplica_Handler,
+		},
+	},
+	Streams:  []grpc.StreamDesc{},
+	Metadata: "pkg/proto/ha.proto",
+}
+
+func init() { proto.RegisterFile("pkg/proto/ha.proto", fileDescriptor_ha_5038a62bb020d02f) }
+
+var fileDescriptor_ha_5038a62bb020d02f = []byte{
+	// 532 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0xff, 0x9c, 0x54, 0xd1, 0x6e, 0xda, 0x3c,
+	0x18, 0xfd, 0x43, 0x81, 0xc2, 0xd7, 0xbf, 0x6d, 0x6a, 0x40, 0xcd, 0xba, 0x75, 0x8a, 0xb8, 0xca,
+	0x3a, 0x89, 0x48, 0xd0, 0x09, 0x71, 0x59, 0x36, 0x75, 0x43, 0x2a, 0x08, 0x65, 0xbb, 0xda, 0x4d,
+	0xe4, 0x24, 0x26, 0x58, 0xc4, 0xd8, 0x8d, 0x1d, 0x09, 0xa4, 0x3d, 0xc4, 0x1e, 0x63, 0xaf, 0xb7,
+	0x37, 0x98, 0x62, 0x98, 0x88, 0x00, 0x4d, 0xda, 0xee, 0x7c, 0xce, 0x97, 0x9c, 0xf3, 0x9d, 0x63,
+	0xc9, 0x80, 0xc4, 0x22, 0x76, 0x45, 0xca, 0x15, 0x77, 0xe7, 0xb8, 0xa3, 0x0f, 0xa8, 0x1a, 0xa4,
+	0x7c, 0x41, 0xd2, 0x36, 0x85, 0xf2, 0x84, 0x47, 0x04, 0xbd, 0x80, 0xda, 0x92, 0x47, 0xc4, 0x8f,
+	0x53, 0x61, 0x19, 0xb6, 0xe1, 0xd4, 0xbd, 0xd3, 0x1c, 0x7f, 0x4c, 0x05, 0x7a, 0x09, 0x75, 0x2a,
+	0x7d, 0x86, 0xa5, 0x22, 0xa9, 0x55, 0xb2, 0x0d, 0xa7, 0xe6, 0xd5, 0xa8, 0x1c, 0x6b, 0x8c, 0xde,
+	0xc0, 0x15, 0xc3, 0x2b, 0x5f, 0xae, 0x97, 0x21, 0x89, 0xfc, 0x84, 0xc7, 0x3e, 0x8d, 0xac, 0x13,
+	0xdb, 0x70, 0xca, 0xde, 0x05, 0xc3, 0xab, 0xcf, 0x9a, 0x7f, 0xe2, 0xf1, 0x28, 0x6a, 0xff, 0x34,
+	0x00, 0xe5, 0x78, 0x2c, 0xe3, 0x47, 0x9a, 0x90, 0x9c, 0x54, 0x84, 0xa1, 0x26, 0x54, 0x14, 0x17,
+	0x34, 0xdc, 0xda, 0x6e, 0x00, 0x7a, 0x0d, 0x20, 0xb3, 0x40, 0x86, 0x29, 0x0d, 0xb6, 0xae, 0x75,
+	0xaf, 0xc0, 0xe4, 0xfb, 0xce, 0x68, 0x42, 0xfc, 0x20, 0x9b, 0x69, 0xbb, 0xff, 0xbd, 0xd3, 0x1c,
+	0x0f, 0xb3, 0x19, 0xea, 0xc3, 0x39, 0x93, 0xb1, 0xaf, 0xc7, 0x6a, 0x2d, 0x88, 0x55, 0xb6, 0x0d,
+	0xe7, 0xa2, 0xdb, 0xe8, 0x6c, 0x22, 0x77, 0xb6, 0xfe, 0x5f, 0xd6, 0x82, 0x78, 0x67, 0x6c, 0x07,
+	0xf2, 0xa0, 0xfa, 0xa7, 0x25, 0x66, 0xc4, 0xaa, 0x68, 0x4b, 0x6d, 0x32, 0xc1, 0x8c, 0xa0, 0x5b,
+	0x80, 0x30, 0x25, 0x58, 0x91, 0xc8, 0xc7, 0xca, 0xaa, 0xda, 0x86, 0x73, 0xee, 0xd5, 0xb7, 0xcc,
+	0x83, 0x42, 0x2d, 0xa8, 0x6e, 0xc3, 0x9f, 0xea, 0xf0, 0x95, 0x44, 0x67, 0xfe, 0x06, 0xcd, 0x3c,
+	0xb2, 0x47, 0x18, 0x57, 0xc4, 0x23, 0x22, 0xa1, 0x21, 0xf6, 0xc8, 0x33, 0xea, 0x43, 0x5d, 0x7f,
+	0xae, 0x08, 0x93, 0x96, 0x61, 0x9f, 0x38, 0x67, 0xdd, 0x9b, 0xdf, 0xfb, 0x1d, 0x76, 0xe4, 0xd5,
+	0x92, 0xcd, 0x41, 0xa2, 0xb7, 0x80, 0x12, 0x2c, 0xd5, 0x5e, 0xe1, 0x25, 0xed, 0x79, 0x99, 0x4f,
+	0x8a, 0x8d, 0x5f, 0x43, 0xeb, 0x88, 0xbb, 0x14, 0xed, 0xf7, 0xd0, 0x9c, 0x66, 0x49, 0x72, 0xb0,
+	0xd6, 0x5f, 0xa9, 0x4f, 0xa1, 0x75, 0x44, 0x44, 0x8a, 0x7f, 0x0e, 0x77, 0xf7, 0xdd, 0x80, 0xb3,
+	0xc2, 0xed, 0x20, 0x04, 0x17, 0x05, 0x38, 0xa1, 0x89, 0xf9, 0xdf, 0x1e, 0x37, 0x8a, 0x56, 0xa6,
+	0x81, 0x1a, 0x70, 0x59, 0xe0, 0x3e, 0x60, 0x85, 0xcd, 0x12, 0x6a, 0xc1, 0x55, 0x81, 0x7c, 0xa4,
+	0x4b, 0x2a, 0xe7, 0xe6, 0x09, 0x6a, 0x82, 0x59, 0xa0, 0xc7, 0x32, 0x1e, 0x45, 0x66, 0x19, 0x5d,
+	0x43, 0xa3, 0xc0, 0x3e, 0x71, 0x1c, 0x0d, 0x39, 0x57, 0x66, 0xa5, 0xfb, 0xc3, 0x80, 0xd2, 0xa7,
+	0x07, 0x34, 0x85, 0xab, 0x83, 0x26, 0xd1, 0xab, 0x62, 0xa8, 0xfd, 0x2e, 0x6f, 0x6e, 0xff, 0x30,
+	0x95, 0x22, 0x57, 0x3c, 0x68, 0x6f, 0xa7, 0x78, 0xec, 0x76, 0x76, 0x8a, 0x47, 0x6b, 0x1f, 0xde,
+	0x7d, 0x75, 0x62, 0xaa, 0xe6, 0x59, 0xd0, 0x09, 0x39, 0x73, 0x07, 0x83, 0x77, 0x83, 0x5e, 0xef,
+	0xfe, 0xbe, 0xef, 0x06, 0x59, 0xb8, 0x20, 0x8a, 0x3d, 0xbb, 0xf9, 0x33, 0x90, 0x8a, 0xd0, 0x9d,
+	0xe3, 0xa0, 0xaa, 0x5f, 0x81, 0xde, 0xaf, 0x00, 0x00, 0x00, 0xff, 0xff, 0x26, 0x0a, 0x37, 0xf9,
+	0x1b, 0x04, 0x00, 0x00,
 }

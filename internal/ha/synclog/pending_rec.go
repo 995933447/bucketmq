@@ -2,17 +2,19 @@ package synclog
 
 import (
 	"encoding/binary"
+	"fmt"
 	"github.com/995933447/bucketmq/internal/util"
 	"io"
 	"os"
 	"sync"
 )
 
-// item begin marker | seq | item end marker
+// item begin marker | nOSeq | idx offset | item end marker
 //
-//	2                |  8  |	   2
+//	2                |  8  |   8        | 	   2
 const (
-	pendingIdxBufBytes = 8 + bufBoundariesBytes
+	nOSeqInPendingIdxBufBytes = 8
+	pendingIdxBufBytes        = 16 + bufBoundariesBytes
 )
 
 const (
@@ -21,6 +23,7 @@ const (
 )
 
 type pendingMsgIdx struct {
+	nOSeq     uint64
 	idxOffset uint64
 }
 
@@ -28,8 +31,8 @@ type ConsumePendingRec struct {
 	baseDir         string
 	pendingMu       sync.RWMutex
 	unPendMu        sync.RWMutex
-	pendingMsgIdxes map[uint64]struct{}
-	unPendMsgIdxes  map[uint64]struct{}
+	pendingMsgIdxes map[uint64]map[uint64]struct{}
+	unPendMsgIdxes  map[uint64]map[uint64]struct{}
 	pendingFp       *os.File
 	unPendFp        *os.File
 	pendingBuf      []byte
@@ -39,8 +42,13 @@ type ConsumePendingRec struct {
 func newConsumePendingRec(baseDir string) (*ConsumePendingRec, error) {
 	rec := &ConsumePendingRec{
 		baseDir:         baseDir,
-		pendingMsgIdxes: map[uint64]struct{}{},
-		unPendMsgIdxes:  map[uint64]struct{}{},
+		pendingMsgIdxes: map[uint64]map[uint64]struct{}{},
+		unPendMsgIdxes:  map[uint64]map[uint64]struct{}{},
+	}
+
+	dir := fmt.Sprintf(GetHADataDir(baseDir))
+	if err := mkdirIfNotExist(dir); err != nil {
+		return nil, err
 	}
 
 	var err error
@@ -67,20 +75,30 @@ func (r *ConsumePendingRec) syncDisk() {
 	}
 }
 
-func (r *ConsumePendingRec) isConfirmed(idxOffset uint64) bool {
+func (r *ConsumePendingRec) isConfirmed(nOSeq, idxOffset uint64) bool {
 	r.unPendMu.RLock()
 	defer r.unPendMu.RUnlock()
 
-	_, ok := r.unPendMsgIdxes[idxOffset]
-	return ok
+	if idxSet, ok := r.unPendMsgIdxes[nOSeq]; ok {
+		if _, ok = idxSet[idxOffset]; ok {
+			return true
+		}
+	}
+
+	return false
 }
 
-func (r *ConsumePendingRec) isPending(idxOffset uint64) bool {
+func (r *ConsumePendingRec) isPending(nOSeq, idxOffset uint64) bool {
 	r.pendingMu.RLock()
 	defer r.pendingMu.RUnlock()
 
-	_, ok := r.pendingMsgIdxes[idxOffset]
-	return ok
+	if idxSet, ok := r.pendingMsgIdxes[nOSeq]; !ok {
+		return false
+	} else if _, ok = idxSet[idxOffset]; !ok {
+		return false
+	}
+
+	return true
 }
 
 func (r *ConsumePendingRec) isEmpty() bool {
@@ -152,8 +170,10 @@ func (r *ConsumePendingRec) loadPendings(isLoadUnPend bool) ([]*pendingMsgIdx, e
 				return nil, errFileCorrupted
 			}
 
-			idxOffset := bin.Uint64(pendingBuf[bufBoundaryBytes : bufBoundaryBytes+8])
+			nOSeq := bin.Uint64(pendingBuf[bufBoundaryBytes : bufBoundaryBytes+8])
+			idxOffset := bin.Uint64(pendingBuf[bufBoundaryBytes+8 : bufBoundaryBytes+12])
 			pendings = append(pendings, &pendingMsgIdx{
+				nOSeq:     nOSeq,
 				idxOffset: idxOffset,
 			})
 			pendingBuf = pendingBuf[pendingIdxBufBytes:]
@@ -183,15 +203,22 @@ func (r *ConsumePendingRec) pending(pendings []*pendingMsgIdx, onlyPendOnMem boo
 	r.unPendMu.RLock()
 	var enqueued []*pendingMsgIdx
 	for _, pending := range pendings {
-		if _, ok := r.unPendMsgIdxes[pending.idxOffset]; ok {
-			continue
+		if unPendIdxSet, ok := r.unPendMsgIdxes[pending.nOSeq]; ok {
+			if _, ok = unPendIdxSet[pending.idxOffset]; ok {
+				continue
+			}
 		}
 
-		_, ok := r.pendingMsgIdxes[pending.idxOffset]
-		if ok {
-			continue
+		pendingIdxSet, ok := r.pendingMsgIdxes[pending.nOSeq]
+		if !ok {
+			pendingIdxSet = map[uint64]struct{}{}
+			r.pendingMsgIdxes[pending.nOSeq] = pendingIdxSet
+		} else {
+			if _, ok = pendingIdxSet[pending.idxOffset]; ok {
+				continue
+			}
 		}
-		r.pendingMsgIdxes[pending.idxOffset] = struct{}{}
+		pendingIdxSet[pending.idxOffset] = struct{}{}
 
 		enqueued = append(enqueued, pending)
 	}
@@ -204,7 +231,7 @@ func (r *ConsumePendingRec) pending(pendings []*pendingMsgIdx, onlyPendOnMem boo
 	}
 
 	for _, pending := range enqueued {
-		r.pendingMsgIdxes[pending.idxOffset] = struct{}{}
+		r.pendingMsgIdxes[pending.nOSeq][pending.idxOffset] = struct{}{}
 	}
 
 	return nil
@@ -216,9 +243,15 @@ func (r *ConsumePendingRec) unPend(pendings []*pendingMsgIdx, onlyUnPendMem bool
 
 	var enqueued []*pendingMsgIdx
 	for _, pending := range pendings {
-		_, ok := r.unPendMsgIdxes[pending.idxOffset]
-		if ok {
-			continue
+		unPendIdxSet, ok := r.unPendMsgIdxes[pending.nOSeq]
+		if !ok {
+			unPendIdxSet = map[uint64]struct{}{}
+			r.unPendMsgIdxes[pending.nOSeq] = unPendIdxSet
+		} else {
+			if _, ok = unPendIdxSet[pending.idxOffset]; ok {
+				return nil
+			}
+			unPendIdxSet[pending.idxOffset] = struct{}{}
 		}
 		enqueued = append(enqueued, pending)
 	}
@@ -232,12 +265,16 @@ func (r *ConsumePendingRec) unPend(pendings []*pendingMsgIdx, onlyUnPendMem bool
 	r.pendingMu.Lock()
 	defer r.pendingMu.Unlock()
 	for _, pending := range enqueued {
-		r.unPendMsgIdxes[pending.idxOffset] = struct{}{}
-		_, ok := r.pendingMsgIdxes[pending.idxOffset]
+		r.unPendMsgIdxes[pending.nOSeq][pending.idxOffset] = struct{}{}
+		pendingMsgIdxes, ok := r.pendingMsgIdxes[pending.nOSeq]
 		if !ok {
 			return nil
 		}
-		delete(r.pendingMsgIdxes, pending.idxOffset)
+		delete(pendingMsgIdxes, pending.idxOffset)
+		if len(pendingMsgIdxes) > 0 {
+			continue
+		}
+		delete(r.pendingMsgIdxes, pending.nOSeq)
 	}
 
 	if len(r.pendingMsgIdxes) == 0 {
@@ -308,7 +345,8 @@ func (r *ConsumePendingRec) write(isUnPend bool, pendings []*pendingMsgIdx) erro
 	bin := binary.LittleEndian
 	for _, pending := range pendings {
 		bin.PutUint16(buf[:bufBoundaryBytes], bufBoundaryBegin)
-		bin.PutUint64(buf[bufBoundaryBytes:], pending.idxOffset)
+		bin.PutUint64(buf[bufBoundaryBytes:bufBoundaryBytes+nOSeqInPendingIdxBufBytes], pending.nOSeq)
+		bin.PutUint64(buf[bufBoundaryBytes+nOSeqInPendingIdxBufBytes:], pending.idxOffset)
 		bin.PutUint16(buf[pendingIdxBufBytes-bufBoundaryBytes:], bufBoundaryEnd)
 		buf = buf[pendingIdxBufBytes:]
 	}

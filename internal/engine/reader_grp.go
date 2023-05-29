@@ -67,7 +67,7 @@ func (rg *readerGrp) close() {
 }
 
 func (rg *readerGrp) load() error {
-	dir := getTopicFileDir(rg.Subscriber.baseDir, rg.Subscriber.topic)
+	dir := GetTopicFileDir(rg.Subscriber.baseDir, rg.Subscriber.topic)
 
 	if err := mkdirIfNotExist(dir); err != nil {
 		return err
@@ -83,7 +83,7 @@ func (rg *readerGrp) load() error {
 		startSeq  uint64
 	)
 	for _, file := range files {
-		if !strings.Contains(file.Name(), idxFileSuffix) {
+		if !strings.Contains(file.Name(), IdxFileSuffix) {
 			continue
 		}
 

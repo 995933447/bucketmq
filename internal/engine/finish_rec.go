@@ -4,9 +4,10 @@ import (
 	"encoding/binary"
 	"io"
 	"os"
+	"time"
 )
 
-const finishFileSuffix = ".fin"
+const FinishFileSuffix = ".fin"
 
 // item begin marker  | idx offset | item end marker
 //
@@ -114,17 +115,15 @@ func (r *finishRec) load() error {
 }
 
 func (r *finishRec) confirm(confirmedList []*confirmedMsgIdx) error {
-	needBufLen := len(confirmedList) * finishIdxBufBytes
-	var bufLen int
+	now := time.Now().Unix()
 
-	var totalBuf []byte
-	needExpandBuf := bufLen < needBufLen
+	needBufLen := len(confirmedList) * finishIdxBufBytes
+	needExpandBuf := len(r.buf) < needBufLen
 	if needExpandBuf {
 		r.buf = make([]byte, needBufLen)
 	}
 
-	buf := totalBuf
-
+	buf := r.buf
 	bin := binary.LittleEndian
 	for _, confirmed := range confirmedList {
 		bin.PutUint16(buf[:bufBoundaryBytes], bufBoundaryBegin)
@@ -135,7 +134,7 @@ func (r *finishRec) confirm(confirmedList []*confirmedMsgIdx) error {
 
 	var total int
 	for {
-		n, err := r.fp.Write(totalBuf[total:needBufLen])
+		n, err := r.fp.Write(r.buf[total:needBufLen])
 		if err != nil {
 			return err
 		}
@@ -146,6 +145,12 @@ func (r *finishRec) confirm(confirmedList []*confirmedMsgIdx) error {
 			break
 		}
 	}
+
+	OnAnyFileWritten(r.fp.Name(), buf, &ExtraOfFileWritten{
+		Topic:            r.Subscriber.topic,
+		Subscriber:       r.Subscriber.name,
+		ContentCreatedAt: uint32(now),
+	})
 
 	for _, confirmed := range confirmedList {
 		r.msgIdxes[confirmed.idxOffset] = struct{}{}

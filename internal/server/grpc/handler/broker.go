@@ -10,6 +10,7 @@ import (
 	"github.com/995933447/bucketmq/pkg/discover"
 	"github.com/995933447/bucketmq/pkg/rpc/broker"
 	"github.com/995933447/bucketmq/pkg/rpc/errs"
+	"github.com/995933447/bucketmq/pkg/rpc/ha"
 	"github.com/995933447/bucketmq/pkg/rpc/health"
 	"github.com/995933447/microgosuit/grpcsuit"
 	"google.golang.org/grpc"
@@ -75,7 +76,7 @@ func (b Broker) Pub(ctx context.Context, req *broker.PubReq) (*broker.PubResp, e
 	}
 
 	for _, node := range brokerCfg.Nodes {
-		var nodeDesc broker.Node
+		var nodeDesc ha.Node
 		err = json.Unmarshal([]byte(node.Extra), &nodeDesc)
 		if err != nil {
 			return nil, err

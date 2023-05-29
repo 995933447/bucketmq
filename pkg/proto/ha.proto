@@ -4,7 +4,9 @@ package broker;
 option go_package = "github.com/995933447/bucketmq/pkg/rpc/ha";
 
 service HA {
+    rpc SyncRemoteReplica(SyncRemoteReplicaReq) returns (SyncRemoteReplicaResp);
 
+    rpc PullRemoteReplica(PullRemoteReplicaReq) returns (PullRemoteReplicaResp);
 }
 
 enum MsgFileType {
@@ -16,6 +18,13 @@ enum MsgFileType {
     MsgFileTypeLoadBoot = 5;
 }
 
+
+message Node {
+    string node_grp = 1;
+    bool is_master = 2;
+    uint64 max_synced_log_id = 3;
+}
+
 message SyncMsgFileLogItem {
     string topic = 1;
     string subscriber = 2;
@@ -23,4 +32,21 @@ message SyncMsgFileLogItem {
     MsgFileType msg_file_type = 4;
     string file_name = 5;
     uint32 created_at = 6;
+    uint64 log_id = 7;
+}
+
+message SyncRemoteReplicaReq {
+    repeated SyncMsgFileLogItem log_items = 1;
+    uint64 last_synced_log_id = 2;
+}
+
+message SyncRemoteReplicaResp {
+}
+
+message PullRemoteReplicaReq {
+    uint64 last_synced_log_id = 2;
+}
+
+message PullRemoteReplicaResp {
+    repeated SyncMsgFileLogItem log_items = 1;
 }

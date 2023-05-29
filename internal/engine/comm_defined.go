@@ -28,3 +28,11 @@ const (
 	bufBoundaryBegin   = uint16(0x1234)
 	bufBoundaryEnd     = uint16(0x5678)
 )
+
+type ExtraOfFileWritten struct {
+	Topic            string
+	Subscriber       string
+	ContentCreatedAt uint32
+}
+
+var OnAnyFileWritten = func(fileName string, buf []byte, extra *ExtraOfFileWritten) {}

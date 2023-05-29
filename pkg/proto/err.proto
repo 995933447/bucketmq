@@ -11,6 +11,8 @@ enum ErrCode {
     ErrCodeNotNodeGrpAvailable = 1001;
     ErrCodeTopicNotFound = 1002;
     ErrCodeConsumerNotFound = 1003;
+
+    ErrCodeLastSyncedMsgLogFallBehind = 2001;
 }
 
 message RPCError {

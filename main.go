@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"flag"
 	"github.com/995933447/bucketmq/internal/engine"
+	"github.com/995933447/bucketmq/internal/ha/synclog"
 	"github.com/995933447/bucketmq/internal/mgr"
 	"github.com/995933447/bucketmq/internal/server/grpc/handler"
 	"github.com/995933447/bucketmq/internal/server/grpc/middleware"
@@ -14,10 +15,12 @@ import (
 	"github.com/995933447/bucketmq/internal/util"
 	"github.com/995933447/bucketmq/pkg/discover"
 	"github.com/995933447/bucketmq/pkg/rpc/broker"
+	"github.com/995933447/bucketmq/pkg/rpc/ha"
 	"github.com/995933447/microgosuit"
 	"github.com/995933447/microgosuit/discovery"
 	"github.com/995933447/microgosuit/factory"
 	"google.golang.org/grpc"
+	"strings"
 	"time"
 )
 
@@ -57,6 +60,8 @@ func main() {
 		panic(err)
 	}
 
+	onMsgFileWritten(synclog.NewWriter(sysCfg.DataDir))
+
 	topicMgr, err := mgr.NewTopicMgr(etcdCli, disc, func(topic, subscriber, consumer string, timeout time.Duration, msg *engine.FileMsg) error {
 		if _, err := consumerService.Consume(consumer, topic, subscriber, timeout, msg); err != nil {
 			return err
@@ -81,7 +86,7 @@ func main() {
 			return nil
 		},
 		BeforeRegDiscover: func(_ discovery.Discovery, node *discovery.Node) error {
-			nodeDesc, err := json.Marshal(&broker.Node{NodeGrp: sysCfg.NodeGrp})
+			nodeDesc, err := json.Marshal(&ha.Node{NodeGrp: sysCfg.NodeGrp})
 			if err != nil {
 				return err
 			}
@@ -96,6 +101,48 @@ func main() {
 	})
 	if err != nil {
 		panic(err)
+	}
+}
+
+func onMsgFileWritten(hASyncLogger *synclog.Writer) {
+	engine.OnAnyFileWritten = func(fileName string, buf []byte, extra *engine.ExtraOfFileWritten) {
+		var syncMsgLogItem *ha.SyncMsgFileLogItem
+
+		if extra.Topic == "" && extra.Subscriber == "" {
+			return
+		}
+
+		if extra.Subscriber == "" {
+			syncMsgLogItem = &ha.SyncMsgFileLogItem{
+				Topic:     extra.Topic,
+				FileBuf:   buf,
+				FileName:  fileName,
+				CreatedAt: extra.ContentCreatedAt,
+			}
+		} else {
+			syncMsgLogItem = &ha.SyncMsgFileLogItem{
+				Topic:      extra.Topic,
+				Subscriber: extra.Subscriber,
+				FileBuf:    buf,
+				FileName:   fileName,
+				CreatedAt:  extra.ContentCreatedAt,
+			}
+		}
+
+		switch true {
+		case strings.Contains(fileName, engine.IdxFileSuffix):
+			syncMsgLogItem.MsgFileType = ha.MsgFileType_MsgFileTypeIdx
+		case strings.Contains(fileName, engine.DataFileSuffix):
+			syncMsgLogItem.MsgFileType = ha.MsgFileType_MsgFileTypeData
+		case strings.Contains(fileName, engine.FinishFileSuffix):
+			syncMsgLogItem.MsgFileType = ha.MsgFileType_MsgFileTypeFinish
+		case strings.Contains(fileName, engine.LoadBootFileSuffix):
+			syncMsgLogItem.MsgFileType = ha.MsgFileType_MsgFileTypeLoadBoot
+		case strings.Contains(fileName, engine.MsgIdFileSuffix):
+			syncMsgLogItem.MsgFileType = ha.MsgFileType_MsgFileTypeMsgId
+		}
+
+		hASyncLogger.Write(syncMsgLogItem)
 	}
 }
 

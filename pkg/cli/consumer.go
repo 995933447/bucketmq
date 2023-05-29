@@ -7,6 +7,7 @@ import (
 	"github.com/995933447/bucketmq/pkg/discover"
 	"github.com/995933447/bucketmq/pkg/rpc/broker"
 	"github.com/995933447/bucketmq/pkg/rpc/consumer"
+	"github.com/995933447/bucketmq/pkg/rpc/ha"
 	"github.com/995933447/bucketmq/pkg/rpc/health"
 	"github.com/995933447/bucketmq/pkg/rpc/snrpc"
 	"github.com/995933447/microgosuit/discovery"
@@ -56,7 +57,7 @@ func (c *Consumer) Subscribe(cfg *broker.Subscriber, handleFunc snrpc.HandleMsgF
 					continue
 				}
 
-				var nodeDesc broker.Node
+				var nodeDesc ha.Node
 				err = json.Unmarshal([]byte(node.Extra), &nodeDesc)
 				if err != nil {
 					return err
@@ -92,9 +93,7 @@ func (c *Consumer) Subscribe(cfg *broker.Subscriber, handleFunc snrpc.HandleMsgF
 				return err
 			}
 
-			err = snrpcCli.Call(uint32(snrpc.SNRPCProto_SNRPCProtoConsumerConnect), time.Second*5, &consumer.ConnSNSrvReq{
-				SN: snrpc.GenSN(),
-			}, &consumer.ConnSNSrvResp{})
+			err = snrpcCli.Call(uint32(snrpc.SNRPCProto_SNRPCProtoConsumerConnect), time.Second*5, &consumer.ConnSNSrvReq{SN: snrpc.GenSN()}, &consumer.ConnSNSrvResp{})
 			if err != nil {
 				return err
 			}

@@ -2,40 +2,44 @@ package synclog
 
 import (
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"github.com/995933447/bucketmq/pkg/rpc/ha"
 	"github.com/golang/protobuf/proto"
 	"io"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 )
 
-func genIdxFileName(baseDir string) string {
-	return fmt.Sprintf("%s/%s"+idxFileSuffix, getHADataDir(baseDir), time.Now().Format("2006010215"))
+var errSeqNotFound = errors.New("sequence file not found")
+
+func genIdxFileName(baseDir, dateTimeSeq string, nOSeq uint64) string {
+	return fmt.Sprintf("%s/%s_%d"+IdxFileSuffix, GetHADataDir(baseDir), dateTimeSeq, nOSeq)
 }
 
-func genDataFileName(baseDir string) string {
-	return fmt.Sprintf("%s/%s"+dataFileSuffix, getHADataDir(baseDir), time.Now().Format("2006010215"))
+func genDataFileName(baseDir, dateTimeSeq string, nOSeq uint64) string {
+	return fmt.Sprintf("%s/%s_%d"+DataFileSuffix, GetHADataDir(baseDir), dateTimeSeq, nOSeq)
 }
 
 func genMsgIdFileName(baseDir string) string {
-	return fmt.Sprintf("%s/%s"+msgIdFileSuffix, getHADataDir(baseDir), time.Now().Format("2006010215"))
+	return fmt.Sprintf("%s/%s"+msgIdFileSuffix, GetHADataDir(baseDir), time.Now().Format("2006010215"))
 }
 
 func genFinishRcFileName(baseDir string) string {
-	return fmt.Sprintf("%s/%s"+finishRcSuffix, getHADataDir(baseDir), time.Now().Format("2006010215"))
+	return fmt.Sprintf("%s/%s"+finishRcSuffix, GetHADataDir(baseDir), time.Now().Format("2006010215"))
 }
 
 func genPendingRcFileName(baseDir string) string {
-	return fmt.Sprintf("%s/%s"+pendingRcSuffix, getHADataDir(baseDir), time.Now().Format("2006010215"))
+	return fmt.Sprintf("%s/%s"+pendingRcSuffix, GetHADataDir(baseDir), time.Now().Format("2006010215"))
 }
 
 func genUnPendRcFileName(baseDir string) string {
-	return fmt.Sprintf("%s/%s"+unPendRcSuffix, getHADataDir(baseDir), time.Now().Format("2006010215"))
+	return fmt.Sprintf("%s/%s"+unPendRcSuffix, GetHADataDir(baseDir), time.Now().Format("2006010215"))
 }
 
-func getHADataDir(baseDir string) string {
+func GetHADataDir(baseDir string) string {
 	return fmt.Sprintf("%s/%s", baseDir, "bucketmq.ha")
 }
 
@@ -52,60 +56,45 @@ func mkdirIfNotExist(dir string) error {
 	return nil
 }
 
-func makeIdxFp(baseDir string, flag int) (*os.File, error) {
-	dir := getHADataDir(baseDir)
-	if err := mkdirIfNotExist(dir); err != nil {
-		return nil, err
+func ParseFileNOSeqStr(file os.DirEntry) (string, bool) {
+	if file.IsDir() {
+		return "", false
 	}
 
-	files, err := os.ReadDir(dir)
-	if err != nil {
-		return nil, err
+	fileName := file.Name()
+
+	suffixPos := strings.IndexByte(fileName, '.')
+	if suffixPos <= 0 {
+		return "", false
 	}
 
-	for _, file := range files {
-		if !strings.HasSuffix(file.Name(), idxFileSuffix) {
-			continue
-		}
-
-		if !strings.Contains(file.Name(), time.Now().Format("2006010215")) {
-			continue
-		}
-
-		return os.OpenFile(dir+"/"+file.Name(), flag, os.ModePerm)
+	fileNameWithoutSuffix := fileName[:suffixPos]
+	fileNameChunk := strings.Split(fileNameWithoutSuffix, "_")
+	if len(fileNameChunk) != 2 {
+		return "", false
 	}
 
-	return os.OpenFile(genIdxFileName(baseDir), flag, os.ModePerm)
+	return fileNameChunk[1], true
 }
 
-func makeDataFp(baseDir string, flag int) (*os.File, error) {
-	dir := getHADataDir(baseDir)
-	if err := mkdirIfNotExist(dir); err != nil {
-		return nil, err
-	}
-
-	files, err := os.ReadDir(dir)
+func MakeSeqIdxFp(baseDir, dateTimeSeq string, nOSeq uint64, flag int) (*os.File, error) {
+	idxFp, err := os.OpenFile(genIdxFileName(baseDir, dateTimeSeq, nOSeq), os.O_CREATE|os.O_RDONLY, os.ModePerm)
 	if err != nil {
 		return nil, err
 	}
+	return idxFp, nil
+}
 
-	for _, file := range files {
-		if !strings.HasSuffix(file.Name(), dataFileSuffix) {
-			continue
-		}
-
-		if !strings.Contains(file.Name(), time.Now().Format("2006010215")) {
-			continue
-		}
-
-		return os.OpenFile(dir+"/"+file.Name(), flag, os.ModePerm)
+func MakeSeqDataFp(baseDir, dateTimeSeq string, nOSeq uint64, flag int) (*os.File, error) {
+	idxFp, err := os.OpenFile(genDataFileName(baseDir, dateTimeSeq, nOSeq), os.O_CREATE|os.O_RDONLY, os.ModePerm)
+	if err != nil {
+		return nil, err
 	}
-
-	return os.OpenFile(genDataFileName(baseDir), flag, os.ModePerm)
+	return idxFp, nil
 }
 
 func makeMsgIdFp(baseDir string) (*os.File, bool, error) {
-	dir := getHADataDir(baseDir)
+	dir := GetHADataDir(baseDir)
 
 	if err := mkdirIfNotExist(dir); err != nil {
 		return nil, false, err
@@ -138,7 +127,7 @@ func makeMsgIdFp(baseDir string) (*os.File, bool, error) {
 }
 
 func makeFinishRcFp(baseDir string) (*os.File, error) {
-	dir := getHADataDir(baseDir)
+	dir := GetHADataDir(baseDir)
 
 	if err := mkdirIfNotExist(dir); err != nil {
 		return nil, err
@@ -166,7 +155,7 @@ func makeFinishRcFp(baseDir string) (*os.File, error) {
 }
 
 func makePendingRcFps(baseDir string) (*os.File, *os.File, error) {
-	dir := getHADataDir(baseDir)
+	dir := GetHADataDir(baseDir)
 
 	if err := mkdirIfNotExist(dir); err != nil {
 		return nil, nil, err
@@ -235,6 +224,7 @@ func ReadLogItem(idxFp, dataFp *os.File, idxOffset uint64) (*ha.SyncMsgFileLogIt
 
 	offset := binary.LittleEndian.Uint32(idxBuf[bufBoundaryBytes+4 : bufBoundaryBytes+8])
 	dataBytes := binary.LittleEndian.Uint32(idxBuf[bufBoundaryBytes+8 : bufBoundaryBytes+12])
+	msgId := binary.LittleEndian.Uint64(idxBuf[bufBoundaryBytes+12 : bufBoundaryBytes+20])
 
 	dataBuf := make([]byte, dataBytes)
 	_, err = dataFp.ReadAt(dataBuf, int64(offset))
@@ -263,5 +253,196 @@ func ReadLogItem(idxFp, dataFp *os.File, idxOffset uint64) (*ha.SyncMsgFileLogIt
 		return nil, false, err
 	}
 
+	item.LogId = msgId
+
 	return &item, hasMore, nil
+}
+
+func scanDirToParseOldestSeq(baseDir string) (uint64, string, error) {
+	dir := GetHADataDir(baseDir)
+
+	if err := mkdirIfNotExist(dir); err != nil {
+		return 0, "", err
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, "", err
+	}
+
+	var (
+		oldestNOSeq       uint64
+		oldestDateTimeSeq string
+	)
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), IdxFileSuffix) {
+			continue
+		}
+
+		seqStr, ok := ParseFileNOSeqStr(file)
+		if !ok {
+			continue
+		}
+
+		curNOSeq, err := strconv.ParseUint(seqStr, 10, 64)
+		if err != nil {
+			return 0, "", err
+		}
+
+		if oldestNOSeq == 0 {
+			oldestNOSeq = curNOSeq
+			oldestDateTimeSeq = file.Name()[:10]
+			continue
+		}
+
+		if curNOSeq < oldestNOSeq {
+			oldestNOSeq = curNOSeq
+			oldestDateTimeSeq = file.Name()[:10]
+		}
+	}
+
+	if oldestNOSeq == 0 {
+		return 0, "", nil
+	}
+
+	return oldestNOSeq, oldestDateTimeSeq, nil
+}
+
+func scanDirToParseNewestSeq(baseDir string) (uint64, string, error) {
+	dir := GetHADataDir(baseDir)
+
+	if err := mkdirIfNotExist(dir); err != nil {
+		return 0, "", err
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, "", err
+	}
+
+	var (
+		newestNOSeq       uint64
+		newestDateTimeSeq string
+	)
+	for _, file := range files {
+		seqNOStr, ok := ParseFileNOSeqStr(file)
+		if !ok {
+			continue
+		}
+
+		var curNOSeq uint64
+		if seqNOStr != "" {
+			curNOSeq, err = strconv.ParseUint(seqNOStr, 10, 64)
+			if err != nil {
+				return 0, "", err
+			}
+		}
+
+		if curNOSeq > newestNOSeq {
+			newestNOSeq = curNOSeq
+			newestDateTimeSeq = file.Name()[:10]
+		}
+	}
+
+	return newestNOSeq, newestDateTimeSeq, nil
+}
+
+func scanDirToParseNextSeq(baseDir string, nOSeq uint64) (uint64, string, error) {
+	dir := GetHADataDir(baseDir)
+
+	if err := mkdirIfNotExist(dir); err != nil {
+		return 0, "", err
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return 0, "", err
+	}
+
+	var (
+		nextNOSeq       uint64
+		nextDateTimeSeq string
+	)
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), IdxFileSuffix) {
+			continue
+		}
+
+		nOSeqStr, ok := ParseFileNOSeqStr(file)
+		if !ok {
+			continue
+		}
+
+		if nOSeqStr == "" {
+			continue
+		}
+
+		curNOSeq, err := strconv.ParseUint(nOSeqStr, 10, 64)
+		if err != nil {
+			return 0, "", err
+		}
+
+		if curNOSeq <= nOSeq {
+			continue
+		}
+
+		if nextNOSeq == 0 {
+			nextNOSeq = curNOSeq
+			nextDateTimeSeq = file.Name()[:10]
+			continue
+		}
+
+		if curNOSeq < nextNOSeq {
+			nextNOSeq = nOSeq
+			nextDateTimeSeq = file.Name()[:10]
+		}
+	}
+
+	if nextNOSeq == 0 {
+		return 0, "", errSeqNotFound
+	}
+
+	return nextNOSeq, nextDateTimeSeq, nil
+}
+
+func GetIdxFpByNOSeq(baseDir string, nOSeq uint64) (*os.File, error) {
+	dir := GetHADataDir(baseDir)
+
+	_, err := os.Stat(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), IdxFileSuffix) {
+			continue
+		}
+
+		nOSeqStr, ok := ParseFileNOSeqStr(file)
+		if !ok {
+			continue
+		}
+
+		if nOSeqStr == "" {
+			continue
+		}
+
+		curNOSeq, err := strconv.ParseUint(nOSeqStr, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+
+		if curNOSeq != nOSeq {
+			continue
+		}
+
+		return MakeSeqIdxFp(baseDir, file.Name()[:10], nOSeq, os.O_CREATE|os.O_WRONLY|os.O_APPEND)
+	}
+
+	return nil, os.ErrNotExist
 }

@@ -2,9 +2,12 @@ package synclog
 
 import (
 	"encoding/binary"
+	"fmt"
 	"github.com/995933447/bucketmq/internal/util"
 	"github.com/995933447/bucketmq/pkg/rpc/ha"
 	"os"
+	"strconv"
+	"strings"
 	"time"
 )
 
@@ -21,8 +24,8 @@ import (
 const idxBytes = 14
 
 const (
-	idxFileSuffix  = ".idx"
-	dataFileSuffix = ".dat"
+	IdxFileSuffix  = ".idx"
+	DataFileSuffix = ".dat"
 )
 
 func newOutput(writer *Writer) (*output, error) {
@@ -39,9 +42,10 @@ func newOutput(writer *Writer) (*output, error) {
 
 type output struct {
 	*Writer
-	seq    uint64
-	idxFp  *os.File
-	dataFp *os.File
+	nOSeq       uint64
+	dateTimeSeq string
+	idxFp       *os.File
+	dataFp      *os.File
 	*msgIdGen
 	writtenIdxNum    uint32
 	writtenDataBytes uint32
@@ -105,91 +109,156 @@ func (o *output) write(msgList []*ha.SyncMsgFileLogItem) error {
 		return nil
 	}
 
-	if o.idxFp == nil || o.dataFp == nil {
-		if err := o.openFile(); err != nil {
-			return err
-		}
-	}
-
 	bin := binary.LittleEndian
-	accumIdxNum := o.writtenIdxNum
-	oldAccumIdxNum := o.writtenIdxNum
-	accumDataBytes := o.writtenDataBytes
-	var (
-		msg *ha.SyncMsgFileLogItem
-	)
-	for _, msg = range msgList {
-		incrementBytes := uint32(len(msg.FileBuf))
-		incrementBytes += bufBoundariesBytes
+	for {
+		accumIdxNum := o.writtenIdxNum
+		oldAccumIdxNum := o.writtenIdxNum
+		accumDataBytes := o.writtenDataBytes
+		firstMsg := msgList[0]
+		firstMsgHour := time.Unix(int64(firstMsg.CreatedAt), 0).Hour()
+		firstMsgNOSeq := o.curMaxMsgId + 1
+		for _, msg := range msgList {
+			if time.Unix(int64(msgList[0].CreatedAt), 0).Hour() != firstMsgHour {
+				break
+			}
+			incrementBytes := uint32(len(msg.FileBuf))
+			incrementBytes += bufBoundariesBytes
+			accumIdxNum++
+			accumDataBytes += incrementBytes
+		}
 
-		accumIdxNum++
-		accumDataBytes += incrementBytes
-	}
+		batchWriteIdxNum := accumIdxNum - oldAccumIdxNum
 
-	batchWriteIdxNum := accumIdxNum - oldAccumIdxNum
+		idxBufBytes := batchWriteIdxNum * idxBytes
+		if uint32(len(o.idxBuf)) < idxBufBytes {
+			o.idxBuf = make([]byte, idxBufBytes)
+		}
 
-	idxBufBytes := batchWriteIdxNum * idxBytes
-	if uint32(len(o.idxBuf)) < idxBufBytes {
-		o.idxBuf = make([]byte, idxBufBytes)
-	}
+		dataBufBytes := accumDataBytes - o.writtenDataBytes
+		if uint32(len(o.dataBuf)) < dataBufBytes {
+			o.dataBuf = make([]byte, dataBufBytes)
+		}
 
-	dataBufBytes := accumDataBytes - o.writtenDataBytes
-	if uint32(len(o.dataBuf)) < dataBufBytes {
-		o.dataBuf = make([]byte, dataBufBytes)
-	}
+		dataBuf := o.dataBuf
+		idxBuf := o.idxBuf
+		dataBufOffset := o.writtenDataBytes
+		for i := uint32(0); i < batchWriteIdxNum; i++ {
+			msg := msgList[i]
+			bufBytes := len(msg.FileBuf)
 
-	dataBuf := o.dataBuf
-	idxBuf := o.idxBuf
-	dataBufOffset := o.writtenDataBytes
-	for i := uint32(0); i < batchWriteIdxNum; i++ {
-		msg := msgList[i]
+			bin.PutUint16(dataBuf[:bufBoundaryBytes], bufBoundaryBegin)
+			copy(dataBuf[bufBoundaryBytes:], msg.FileBuf)
+			bin.PutUint16(dataBuf[bufBoundaryBytes+bufBytes:], bufBoundaryEnd)
+			dataItemBufBytes := bufBytes + bufBoundariesBytes
+			dataBuf = dataBuf[dataItemBufBytes:]
 
-		bufBytes := len(msg.FileBuf)
+			bin.PutUint16(idxBuf[:bufBoundaryBytes], bufBoundaryBegin)
+			idxBuf = idxBuf[bufBoundaryBytes:]
+			bin.PutUint32(idxBuf[0:4], msg.CreatedAt)             // created at
+			bin.PutUint32(idxBuf[4:8], dataBufOffset)             // offset
+			bin.PutUint32(idxBuf[8:12], uint32(dataItemBufBytes)) // size
+			bin.PutUint64(idxBuf[12:20], o.curMaxMsgId+uint64(i+1))
+			bin.PutUint16(idxBuf[20:], bufBoundaryEnd)
+			idxBuf = idxBuf[20+bufBoundaryBytes:]
 
-		bin.PutUint16(dataBuf[:bufBoundaryBytes], bufBoundaryBegin)
-		copy(dataBuf[bufBoundaryBytes:], msg.FileBuf)
-		bin.PutUint16(dataBuf[bufBoundaryBytes+bufBytes:], bufBoundaryEnd)
-		dataItemBufBytes := bufBytes + bufBoundariesBytes
-		dataBuf = dataBuf[dataItemBufBytes:]
+			dataBufOffset += uint32(dataItemBufBytes)
+		}
 
-		bin.PutUint16(idxBuf[:bufBoundaryBytes], bufBoundaryBegin)
-		idxBuf = idxBuf[bufBoundaryBytes:]
-		bin.PutUint32(idxBuf[0:4], msg.CreatedAt)             // created at
-		bin.PutUint32(idxBuf[4:8], dataBufOffset)             // offset
-		bin.PutUint32(idxBuf[8:12], uint32(dataItemBufBytes)) // size
-		bin.PutUint64(idxBuf[12:20], o.curMaxMsgId+uint64(i+1))
-		bin.PutUint16(idxBuf[20:], bufBoundaryEnd)
-		idxBuf = idxBuf[20+bufBoundaryBytes:]
+		dateTimeSeq := time.Unix(int64(firstMsg.CreatedAt), 0).Format("2006010215")
+		if o.dateTimeSeq != dateTimeSeq {
+			o.idxFp = nil
+			o.dataFp = nil
+			dir := GetHADataDir(o.Writer.baseDir)
+			if err := mkdirIfNotExist(dir); err != nil {
+				return err
+			}
 
-		dataBufOffset += uint32(dataItemBufBytes)
-	}
+			files, err := os.ReadDir(dir)
+			if err != nil {
+				return err
+			}
 
-	n, err := o.dataFp.Write(o.dataBuf[:dataBufBytes])
-	if err != nil {
-		return err
-	}
-	for uint32(n) < dataBufBytes {
-		more, err := o.dataFp.Write(o.dataBuf[n:dataBufBytes])
+			for _, file := range files {
+				if !strings.HasSuffix(file.Name(), IdxFileSuffix) {
+					continue
+				}
+
+				if !strings.Contains(file.Name(), dateTimeSeq) {
+					continue
+				}
+
+				nOSeqStr, ok := ParseFileNOSeqStr(file)
+				if !ok {
+					continue
+				}
+
+				var nOSeq uint64
+				if nOSeqStr != "" {
+					var err error
+					nOSeq, err = strconv.ParseUint(nOSeqStr, 10, 64)
+					if err != nil {
+						return err
+					}
+				}
+
+				o.dateTimeSeq = dateTimeSeq
+				o.nOSeq = nOSeq
+				o.idxFp, err = os.OpenFile(dir+"/"+file.Name(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+				if err != nil {
+					return err
+				}
+				o.dataFp, err = os.OpenFile(dir+"/"+strings.ReplaceAll(file.Name(), IdxFileSuffix, DataFileSuffix), os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+				if err != nil {
+					return err
+				}
+			}
+
+			if o.idxFp == nil || o.dataFp == nil {
+				o.dateTimeSeq = dateTimeSeq
+				o.nOSeq = firstMsgNOSeq
+				o.idxFp, err = os.OpenFile(dir+"/"+fmt.Sprintf("%s_%d.%s", o.dateTimeSeq, o.nOSeq, IdxFileSuffix), os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+				if err != nil {
+					return err
+				}
+				o.idxFp, err = os.OpenFile(dir+"/"+fmt.Sprintf("%s_%d.%s", o.dateTimeSeq, o.nOSeq, DataFileSuffix), os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+				if err != nil {
+					return err
+				}
+			}
+		}
+
+		n, err := o.dataFp.Write(o.dataBuf[:dataBufBytes])
 		if err != nil {
 			return err
 		}
-		n += more
-	}
+		for uint32(n) < dataBufBytes {
+			more, err := o.dataFp.Write(o.dataBuf[n:dataBufBytes])
+			if err != nil {
+				return err
+			}
+			n += more
+		}
 
-	n, err = o.idxFp.Write(o.idxBuf[:idxBufBytes])
-	if err != nil {
-		return err
-	}
-	for uint32(n) < idxBufBytes {
-		more, err := o.idxFp.Write(o.idxBuf[n:idxBufBytes])
+		n, err = o.idxFp.Write(o.idxBuf[:idxBufBytes])
 		if err != nil {
 			return err
 		}
-		n += more
-	}
+		for uint32(n) < idxBufBytes {
+			more, err := o.idxFp.Write(o.idxBuf[n:idxBufBytes])
+			if err != nil {
+				return err
+			}
+			n += more
+		}
 
-	if err := o.msgIdGen.Incr(uint64(batchWriteIdxNum)); err != nil {
-		return err
+		if err := o.msgIdGen.Incr(uint64(batchWriteIdxNum)); err != nil {
+			return err
+		}
+
+		msgList = msgList[batchWriteIdxNum:]
+		if len(msgList) == 0 {
+			break
+		}
 	}
 
 	return nil
@@ -205,47 +274,4 @@ func (o *output) close() {
 	o.writtenDataBytes = 0
 	o.writtenIdxNum = 0
 	o.openFileTime = time.Time{}
-}
-
-func (o *output) openFile() error {
-	curSeq := o.seq
-	if o.idxFp != nil && o.dataFp != nil {
-		curSeq = o.curMaxMsgId + 1
-	}
-
-	idxFp, err := makeIdxFp(o.Writer.baseDir, os.O_CREATE|os.O_APPEND)
-	if err != nil {
-		return err
-	}
-
-	dataFp, err := makeDataFp(o.Writer.baseDir, os.O_CREATE|os.O_APPEND)
-	if err != nil {
-		return err
-	}
-
-	o.close()
-
-	o.seq = curSeq
-	o.idxFp = idxFp
-	o.dataFp = dataFp
-	o.openFileTime = time.Now()
-
-	idxFileState, err := o.idxFp.Stat()
-	if err != nil {
-		return err
-	}
-
-	dataFileState, err := o.dataFp.Stat()
-	if err != nil {
-		return err
-	}
-
-	if idxFileState.Size()%idxBytes > 0 {
-		return errFileCorrupted
-	}
-
-	o.writtenIdxNum = uint32(idxFileState.Size() / int64(idxBytes))
-	o.writtenDataBytes = uint32(dataFileState.Size())
-
-	return nil
 }

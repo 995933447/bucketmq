@@ -12,9 +12,9 @@ const (
 )
 
 type msgIdGen struct {
-	baseDir, topic string
-	fp             *os.File
-	curMaxMsgId    uint64
+	baseDir     string
+	fp          *os.File
+	curMaxMsgId uint64
 }
 
 func newMsgIdGen(baseDir string) (*msgIdGen, error) {

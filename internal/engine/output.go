@@ -23,8 +23,8 @@ const (
 )
 
 const (
-	idxFileSuffix  = ".idx"
-	dataFileSuffix = ".dat"
+	IdxFileSuffix  = ".idx"
+	DataFileSuffix = ".dat"
 )
 
 func newOutput(writer *Writer, seq uint64) (*output, error) {
@@ -233,6 +233,11 @@ func (o *output) write(msgList []*Msg) error {
 			n += more
 		}
 
+		OnAnyFileWritten(o.dataFp.Name(), o.dataBuf[:dataBufBytes], &ExtraOfFileWritten{
+			Topic:            o.Writer.topic,
+			ContentCreatedAt: uint32(now.Unix()),
+		})
+
 		n, err = o.idxFp.Write(o.idxBuf[:idxBufBytes])
 		if err != nil {
 			return err
@@ -245,7 +250,14 @@ func (o *output) write(msgList []*Msg) error {
 			n += more
 		}
 
-		o.Writer.afterWriteCh <- o.seq
+		OnAnyFileWritten(o.dataFp.Name(), o.dataBuf[:dataBufBytes], &ExtraOfFileWritten{
+			Topic:            o.Writer.topic,
+			ContentCreatedAt: uint32(now.Unix()),
+		})
+
+		for _, afterWriteCh := range o.afterWriteChs {
+			afterWriteCh <- o.seq
+		}
 
 		if err := o.msgIdGen.Incr(uint64(batchWriteIdxNum)); err != nil {
 			return err

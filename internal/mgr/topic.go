@@ -232,6 +232,7 @@ func (m *TopicMgr) onSubscriberCfgUpdated(cfg *SubscriberCfg) error {
 		subscriber.Exit()
 	}
 
+	watchWrittenCh := make(chan uint64)
 	subscriber, err := engine.NewSubscriber(m.Discovery, &engine.SubscriberCfg{
 		LodeMode:                     cfg.LodeMode,
 		LoadMsgBootId:                cfg.LoadMsgBootId,
@@ -245,12 +246,14 @@ func (m *TopicMgr) onSubscriberCfgUpdated(cfg *SubscriberCfg) error {
 		MaxConcurConsumeNumPerBucket: cfg.MaxConcurConsumeNumPerBucket,
 		IsSerial:                     cfg.IsSerial,
 		MaxConsumeMs:                 cfg.MaxConsumeMs,
-		WatchWrittenCh:               topic.writer.GetAfterWriteCh(),
+		WatchWrittenCh:               watchWrittenCh,
 	}, m.consumeFunc)
 	if err != nil {
 		util.Logger.Error(nil, err)
 		return nil
 	}
+
+	topic.writer.AddAfterWriteCh(watchWrittenCh)
 
 	topic.subscribers[cfg.Name] = subscriber
 	topic.SubscriberCfgs[cfg.Name] = cfg
@@ -350,6 +353,7 @@ func (m *TopicMgr) newTopic(cfg *TopicCfg) (*topic, error) {
 	}
 
 	for _, subscriberCfg := range subscriberCfgs {
+		watchWrittenCh := make(chan uint64)
 		topic.subscribers[subscriberCfg.Name], err = engine.NewSubscriber(m.Discovery, &engine.SubscriberCfg{
 			LoadMsgBootId:                subscriberCfg.LoadMsgBootId,
 			LodeMode:                     subscriberCfg.LodeMode,
@@ -363,11 +367,13 @@ func (m *TopicMgr) newTopic(cfg *TopicCfg) (*topic, error) {
 			MsgWeight:                    subscriberCfg.MsgWeight,
 			IsSerial:                     subscriberCfg.IsSerial,
 			MaxConsumeMs:                 subscriberCfg.MaxConsumeMs,
-			WatchWrittenCh:               topic.writer.GetAfterWriteCh(),
+			WatchWrittenCh:               watchWrittenCh,
 		}, m.consumeFunc)
 		if err != nil {
 			return nil, err
 		}
+
+		topic.writer.AddAfterWriteCh(watchWrittenCh)
 
 		topic.SubscriberCfgs[subscriberCfg.Name] = subscriberCfg
 	}

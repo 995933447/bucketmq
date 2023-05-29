@@ -1,10 +1,17 @@
 package synclog
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"github.com/995933447/bucketmq/internal/util"
+	"github.com/995933447/bucketmq/pkg/discover"
 	"github.com/995933447/bucketmq/pkg/rpc/ha"
+	"github.com/995933447/microgosuit/discovery"
+	"github.com/995933447/microgosuit/grpcsuit"
 	"github.com/fsnotify/fsnotify"
+	"golang.org/x/net/context"
+	"google.golang.org/grpc"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -27,60 +34,50 @@ func newConsumer(baseDir string) (*Consumer, error) {
 
 	consumer.finishRec = finishRec
 
-	idxNum := finishRec.getWaterMark()
+	nOSeq, dateTimeSeq, idxNum := finishRec.getWaterMark()
 
-	consumer.nextIdxCursor = idxNum
+	if nOSeq != 0 && dateTimeSeq != "" {
+		consumer.nextIdxCursor = idxNum
 
-	consumer.idxFp, err = makeIdxFp(consumer.baseDir, os.O_CREATE|os.O_RDONLY)
-	if err != nil {
-		return nil, err
-	}
+		consumer.idxFp, err = MakeSeqIdxFp(consumer.baseDir, dateTimeSeq, nOSeq, os.O_CREATE|os.O_RDONLY)
+		if err != nil {
+			return nil, err
+		}
 
-	consumer.dataFp, err = makeDataFp(consumer.baseDir, os.O_CREATE|os.O_RDONLY)
-	if err != nil {
-		return nil, err
-	}
+		consumer.dataFp, err = MakeSeqDataFp(consumer.baseDir, dateTimeSeq, nOSeq, os.O_CREATE|os.O_RDONLY)
+		if err != nil {
+			return nil, err
+		}
 
-	if err = consumer.refreshMsgNum(); err != nil {
-		return nil, err
-	}
-
-	consumer.pendingRec, err = newConsumePendingRec(consumer.baseDir)
-	if err != nil {
-		return nil, err
+		if err = consumer.refreshMsgNum(); err != nil {
+			return nil, err
+		}
 	}
 
 	return consumer, nil
 }
 
 type confirmMsgReq struct {
-	idxOffset uint64
+	nOSeq       uint64
+	dateTimeSeq string
+	idxOffset   uint64
 }
 
 type Consumer struct {
-	baseDir             string
-	status              runState
-	idxFp               *os.File
-	dataFp              *os.File
-	nextIdxCursor       uint64
-	finishRec           *ConsumeWaterMarkRec
-	opFinishRecMu       sync.RWMutex
-	pendingRec          *ConsumePendingRec
-	msgNum              uint64
-	isWaitingMsgConfirm atomic.Value // bool
-	unsubscribeSignCh   chan struct{}
-	confirmMsgCh        chan *confirmMsgReq
+	discovery.Discovery
+	baseDir           string
+	status            runState
+	idxFp             *os.File
+	dataFp            *os.File
+	nextIdxCursor     uint64
+	finishRec         *ConsumeWaterMarkRec
+	opFinishRecMu     sync.RWMutex
+	msgNum            uint64
+	unsubscribeSignCh chan struct{}
+	confirmMsgCh      chan *confirmMsgReq
 }
 
-func (c *Consumer) IsWaitingMsgConfirm() bool {
-	isWaiting := c.isWaitingMsgConfirm.Load()
-	if isWaiting != nil {
-		return isWaiting.(bool)
-	}
-	return false
-}
-
-func (c *Consumer) subscribe() error {
+func (c *Consumer) Start() error {
 	fileWatcher, err := fsnotify.NewWatcher()
 	if err != nil {
 		return err
@@ -97,9 +94,16 @@ func (c *Consumer) subscribe() error {
 	defer directlyTrySwitchFileTk.Stop()
 	syncDiskTk := time.NewTicker(time.Second * 5)
 	defer syncDiskTk.Stop()
-	var needWatchNewFile bool
+	needWatchNewFile := c.idxFp != nil
 	for {
-		needSwitchNewFile, err := c.finishRec.isFinished()
+		if c.nextIdxCursor < c.msgNum {
+			if err = c.consumeBatch(); err != nil {
+				util.Logger.Error(context.Background(), err)
+			}
+			continue
+		}
+
+		needSwitchNewFile, err := c.finishRec.isOffsetsFinishedInSeq()
 		if err != nil {
 			util.Logger.Error(nil, err)
 			time.Sleep(time.Millisecond * 500)
@@ -107,22 +111,21 @@ func (c *Consumer) subscribe() error {
 		}
 
 		if needSwitchNewFile {
-			_ = fileWatcher.Remove(c.idxFp.Name())
+			if c.idxFp != nil {
+				_ = fileWatcher.Remove(c.idxFp.Name())
+			}
 			for {
-				if err = c.reOpenFile(); err != nil {
-					util.Logger.Error(nil, err)
+				if err = c.switchNextSeqFile(); err != nil {
+					if err != errSeqNotFound {
+						util.Logger.Error(nil, err)
+					}
 					time.Sleep(time.Millisecond * 500)
 					continue
 				}
+
 				needWatchNewFile = true
 				break
 			}
-		}
-
-		if !c.IsWaitingMsgConfirm() && c.nextIdxCursor < c.msgNum {
-			c.isWaitingMsgConfirm.Store(true)
-			// do remote sync
-			continue
 		}
 
 		if needWatchNewFile {
@@ -145,7 +148,6 @@ func (c *Consumer) subscribe() error {
 		case <-directlyTrySwitchFileTk.C:
 		case <-syncDiskTk.C:
 			c.finishRec.syncDisk()
-			c.pendingRec.syncDisk()
 		case event := <-fileWatcher.Events:
 			util.Logger.Debug(nil, "watch file changed")
 			if event.Has(fsnotify.Chmod) {
@@ -164,60 +166,10 @@ func (c *Consumer) subscribe() error {
 			util.Logger.Debug(nil, "unwatched")
 			c.status = runStateExited
 			goto out
-		case confirmed := <-c.confirmMsgCh:
-			util.Logger.Debug(nil, "rev confirmed")
-			var confirmedList []*confirmMsgReq
-			confirmedList = append(confirmedList, confirmed)
-			for {
-				select {
-				case more := <-c.confirmMsgCh:
-					confirmedList = append(confirmedList, more)
-				default:
-				}
-				break
-			}
-
-			var (
-				confirmedMax *confirmMsgReq
-				unPends      []*pendingMsgIdx
-			)
-			for _, confirmed := range confirmedList {
-				unPends = append(unPends, &pendingMsgIdx{
-					idxOffset: confirmed.idxOffset,
-				})
-
-				if confirmedMax == nil {
-					confirmedMax = confirmed
-					continue
-				}
-
-				if confirmed.idxOffset > confirmedMax.idxOffset {
-					confirmedMax = confirmed
-				}
-			}
-
-			if notPending, err := c.unPendMsg(unPends); err != nil {
-				util.Logger.Error(nil, err)
-				break
-			} else if !notPending {
-				break
-			}
-
-			if err = c.updateFinishWaterMark(confirmedMax.idxOffset); err != nil {
-				util.Logger.Error(nil, err)
-				break
-			}
-
-			if confirmedMax.idxOffset < c.nextIdxCursor-1 {
-				break
-			}
-
-			c.isWaitingMsgConfirm.Store(false)
 		}
 	}
 out:
 	c.finishRec.syncDisk()
-	c.pendingRec.syncDisk()
 	return nil
 }
 
@@ -230,6 +182,59 @@ func (c *Consumer) refreshMsgNum() error {
 	return nil
 }
 
+func (c *Consumer) SyncRemoteReplicas(logItems []*ha.SyncMsgFileLogItem) (bool, error) {
+	brokerCfg, err := c.Discovery.Discover(context.Background(), discover.SrvNameBroker)
+	if err != nil {
+		return false, err
+	}
+
+	var (
+		hasSucc atomic.Bool
+		wg      sync.WaitGroup
+	)
+	for _, node := range brokerCfg.Nodes {
+		var nodeDesc ha.Node
+		err = json.Unmarshal([]byte(node.Extra), &nodeDesc)
+		if err != nil {
+			return false, err
+		}
+
+		if nodeDesc.MaxSyncedLogId < c.finishRec.nOSeq+c.finishRec.idxNum-1 {
+			continue
+		}
+
+		wg.Add(1)
+		go func(node *discovery.Node) {
+			defer wg.Done()
+
+			conn, err := grpc.Dial(fmt.Sprintf("%s:%d", node.Host, node.Port), grpcsuit.NotRoundRobinDialOpts...)
+			if err != nil {
+				util.Logger.Warn(context.Background(), err)
+				return
+			}
+
+			defer conn.Close()
+
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second*60)
+			defer cancel()
+
+			_, err = ha.NewHAClient(conn).SyncRemoteReplica(ctx, &ha.SyncRemoteReplicaReq{
+				LogItems:        logItems,
+				LastSyncedLogId: c.finishRec.nOSeq + c.finishRec.idxNum - 1,
+			})
+			if err != nil {
+				util.Logger.Warn(context.Background(), err)
+				return
+			}
+
+			hasSucc.Store(true)
+		}(node)
+	}
+	wg.Wait()
+
+	return hasSucc.Load(), nil
+}
+
 type PoppedMsgItem struct {
 	Topic     string
 	Seq       uint64
@@ -240,22 +245,21 @@ type PoppedMsgItem struct {
 	RetryCnt  uint32
 }
 
-func (c *Consumer) consumeBatch() ([]*ha.SyncMsgFileLogItem, bool, error) {
+func (c *Consumer) consumeBatch() error {
 	if !c.isSubscribed() {
-		return nil, false, errConsumerNotRunning
+		return errConsumerNotRunning
 	}
 
 	if c.msgNum <= c.nextIdxCursor {
-		return nil, false, nil
+		return nil
 	}
 
 	var (
 		items          []*ha.SyncMsgFileLogItem
-		pendings       []*pendingMsgIdx
 		totalDataBytes int
 	)
 	for {
-		if totalDataBytes > 2*1024*1024 {
+		if totalDataBytes > 10*1024*1024 {
 			break
 		}
 
@@ -265,18 +269,10 @@ func (c *Consumer) consumeBatch() ([]*ha.SyncMsgFileLogItem, bool, error) {
 
 		item, hasMore, err := ReadLogItem(c.idxFp, c.dataFp, c.nextIdxCursor)
 		if err != nil {
-			return nil, false, err
+			return err
 		}
 
-		if !c.pendingRec.isConfirmed(c.nextIdxCursor) {
-			pendings = append(pendings, &pendingMsgIdx{
-				idxOffset: c.nextIdxCursor,
-			})
-
-			items = append(items, item)
-
-			totalDataBytes += len(item.FileBuf)
-		}
+		items = append(items, item)
 
 		if !hasMore {
 			break
@@ -285,11 +281,31 @@ func (c *Consumer) consumeBatch() ([]*ha.SyncMsgFileLogItem, bool, error) {
 		c.nextIdxCursor++
 	}
 
-	if err := c.pendingRec.pending(pendings, false); err != nil {
-		return nil, false, err
+	var retryCnt int
+	for {
+		succ, err := c.SyncRemoteReplicas(items)
+		if err != nil {
+			return err
+		}
+
+		if !succ {
+			retryCnt++
+			if retryCnt < 15 {
+				time.Sleep(time.Second * time.Duration(retryCnt))
+			} else {
+				time.Sleep(time.Second * 15)
+			}
+		}
+
+		break
 	}
 
-	return items, true, nil
+	err := c.updateFinishWaterMark(c.finishRec.nOSeq, c.finishRec.dateTimeSeq, c.finishRec.idxNum+uint64(len(items)))
+	if err != nil {
+		return err
+	}
+
+	return nil
 }
 
 func (c *Consumer) unsubscribe() {
@@ -300,83 +316,45 @@ func (c *Consumer) isSubscribed() bool {
 	return c.status == runStateRunning
 }
 
-func (c *Consumer) confirmMsg(idxOffset uint64) {
-	if c.isSubscribed() {
-		c.confirmMsgCh <- &confirmMsgReq{
-			idxOffset: idxOffset,
-		}
-		return
-	}
-
-	if notPending, err := c.unPendMsg([]*pendingMsgIdx{{idxOffset: idxOffset}}); err != nil {
-		util.Logger.Error(nil, err)
-		return
-	} else if !notPending {
-		return
-	}
-	if err := c.updateFinishWaterMark(idxOffset); err != nil {
-		util.Logger.Error(nil, err)
-	}
-}
-
-func (c *Consumer) isNotConfirmed(idxOffset uint64) bool {
-	if c.pendingRec.isEmpty() {
-		return false
-	}
-
-	return c.pendingRec.isPending(idxOffset)
-}
-
-func (c *Consumer) unPendMsg(pendings []*pendingMsgIdx) (bool, error) {
-	if err := c.pendingRec.unPend(pendings, false); err != nil {
-		return false, err
-	}
-
-	if !c.pendingRec.isEmpty() {
-		return false, nil
-	}
-
-	return true, nil
-}
-
-func (c *Consumer) updateFinishWaterMark(offset uint64) error {
+func (c *Consumer) updateFinishWaterMark(nOSeq uint64, dateTimeSeq string, idxOffset uint64) error {
 	c.opFinishRecMu.Lock()
 	defer c.opFinishRecMu.Unlock()
 
-	consumedIdxNum := c.finishRec.getWaterMark()
+	nOSeq, dateTimeSeq, consumedIdxNum := c.finishRec.getWaterMark()
 
-	if consumedIdxNum >= offset+1 {
+	if consumedIdxNum >= idxOffset+1 {
 		return nil
 	}
 
-	if err := c.finishRec.updateWaterMark(offset + 1); err != nil {
+	if err := c.finishRec.updateWaterMark(nOSeq, dateTimeSeq, idxOffset+1); err != nil {
 		return err
 	}
 
 	return nil
 }
 
-func (c *Consumer) reOpenFile() error {
-	var err error
-	c.idxFp, err = makeIdxFp(c.baseDir, os.O_RDONLY)
+func (c *Consumer) switchNextSeqFile() error {
+	nextNOSeq, nextDateTimeSeq, err := scanDirToParseNextSeq(c.baseDir, c.finishRec.nOSeq)
 	if err != nil {
 		return err
 	}
 
-	c.dataFp, err = makeDataFp(c.baseDir, os.O_RDONLY)
+	c.idxFp, err = MakeSeqIdxFp(c.baseDir, nextDateTimeSeq, nextNOSeq, os.O_RDONLY)
 	if err != nil {
 		return err
 	}
 
-	c.finishRec, err = newConsumeWaterMarkRec(c.baseDir)
+	c.dataFp, err = MakeSeqDataFp(c.baseDir, nextDateTimeSeq, nextNOSeq, os.O_RDONLY)
 	if err != nil {
 		return err
 	}
 
-	idxNum := c.finishRec.getWaterMark()
+	err = c.finishRec.updateWaterMark(nextNOSeq, nextDateTimeSeq, 0)
+	if err != nil {
+		return err
+	}
 
-	c.nextIdxCursor = idxNum
-
+	c.nextIdxCursor = 0
 	if err = c.refreshMsgNum(); err != nil {
 		return err
 	}

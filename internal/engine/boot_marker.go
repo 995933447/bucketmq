@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"io"
 	"os"
+	"time"
 )
 
 // file format is:
@@ -13,7 +14,7 @@ import (
 //
 
 const (
-	loadBootFileSuffix = ".boot"
+	LoadBootFileSuffix = ".boot"
 )
 
 func newBootMarker(readerGrp *readerGrp) (*bootMarker, error) {
@@ -64,6 +65,8 @@ func (b *bootMarker) load() error {
 }
 
 func (b *bootMarker) mark(bootId uint32, seq uint64, idxOffset uint32) error {
+	now := time.Now().Unix()
+
 	var buf []byte
 	binary.LittleEndian.PutUint16(buf[:bufBoundaryBytes], bufBoundaryBegin)
 	binary.LittleEndian.PutUint32(buf[bufBoundaryBytes:bufBoundaryBytes+4], bootId)
@@ -74,6 +77,12 @@ func (b *bootMarker) mark(bootId uint32, seq uint64, idxOffset uint32) error {
 	if err != nil {
 		return err
 	}
+
+	OnAnyFileWritten(b.fp.Name(), buf, &ExtraOfFileWritten{
+		Topic:            b.Subscriber.topic,
+		Subscriber:       b.Subscriber.name,
+		ContentCreatedAt: uint32(now),
+	})
 
 	b.bootId = bootId
 	b.bootSeq = seq

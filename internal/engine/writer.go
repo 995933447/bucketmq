@@ -38,7 +38,7 @@ type Writer struct {
 	flushWait         sync.WaitGroup
 	status            runState
 	output            *output
-	afterWriteCh      chan uint64
+	afterWriteChs     []chan uint64
 }
 
 func (w *Writer) loop() {
@@ -202,8 +202,8 @@ func (w *Writer) IsRunning() bool {
 	return w.status == runStateRunning
 }
 
-func (w *Writer) GetAfterWriteCh() chan uint64 {
-	return w.afterWriteCh
+func (w *Writer) AddAfterWriteCh(afterWriteCh chan uint64) {
+	w.afterWriteChs = append(w.afterWriteChs, afterWriteCh)
 }
 
 func NewWriter(cfg *WriterCfg) *Writer {
@@ -213,7 +213,6 @@ func NewWriter(cfg *WriterCfg) *Writer {
 		msgChan:           make(chan *Msg, 100000),
 		flushSignCh:       make(chan struct{}),
 		unwatchCfgSignCh:  make(chan struct{}),
-		afterWriteCh:      make(chan uint64),
 		idxFileMaxItemNum: cfg.IdxFileMaxItemNum,
 		dataFileMaxBytes:  cfg.DataFileMaxBytes,
 	}
