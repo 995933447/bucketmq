@@ -64,6 +64,9 @@ func (g *msgIdGen) Incr(incr uint64) error {
 	for {
 		n, err := g.undoFp.WriteAt(g.undoBuf[total:], int64(total))
 		if err != nil {
+			if err := g.clearUndo(); err != nil {
+				panic(err)
+			}
 			return err
 		}
 
