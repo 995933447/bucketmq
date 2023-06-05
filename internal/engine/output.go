@@ -148,7 +148,6 @@ func (o *output) write(msgList []*Msg) error {
 	if enabledCompress = o.enabledCompress.Load(); enabledCompress {
 		compressedFlagInIdx = 1
 	}
-	bin := binary.LittleEndian
 	for {
 		accumIdxNum := o.writtenIdxNum
 		accumDataBytes := o.writtenDataBytes
@@ -157,25 +156,25 @@ func (o *output) write(msgList []*Msg) error {
 			needSwitchNewFile bool
 		)
 		for _, msg = range msgList {
-			var incrementBytes uint32
+			var incrDataBytes uint32
 			if enabledCompress {
 				msg.compressed = snappy.Encode(nil, msg.Buf)
-				incrementBytes = uint32(len(msg.compressed))
+				incrDataBytes = uint32(len(msg.compressed))
 			} else {
-				incrementBytes = uint32(len(msg.Buf))
+				incrDataBytes = uint32(len(msg.Buf))
 			}
 
-			incrementBytes += bufBoundariesBytes
-
+			incrDataBytes += bufBoundariesBytes
+			accumDataBytes += incrDataBytes
 			accumIdxNum++
-			accumDataBytes += incrementBytes
+
 			if (o.idxFileMaxItemNum == 0 || accumIdxNum <= o.idxFileMaxItemNum) && (o.dataFileMaxBytes == 0 || accumDataBytes <= o.dataFileMaxBytes) {
 				continue
 			}
 
 			needSwitchNewFile = true
 			accumIdxNum--
-			accumDataBytes -= incrementBytes
+			accumDataBytes -= incrDataBytes
 			break
 		}
 
@@ -223,48 +222,34 @@ func (o *output) write(msgList []*Msg) error {
 
 			bufBytes := len(buf)
 
-			bin.PutUint16(dataBuf[:bufBoundaryBytes], bufBoundaryBegin)
+			binary.LittleEndian.PutUint16(dataBuf[:bufBoundaryBytes], bufBoundaryBegin)
 			copy(dataBuf[bufBoundaryBytes:], buf)
-			bin.PutUint16(dataBuf[bufBoundaryBytes+bufBytes:], bufBoundaryEnd)
+			binary.LittleEndian.PutUint16(dataBuf[bufBoundaryBytes+bufBytes:], bufBoundaryEnd)
 			dataItemBufBytes := bufBytes + bufBoundariesBytes
 			dataBuf = dataBuf[dataItemBufBytes:]
 
-			bin.PutUint16(idxBuf[:bufBoundaryBytes], bufBoundaryBegin)
+			binary.LittleEndian.PutUint16(idxBuf[:bufBoundaryBytes], bufBoundaryBegin)
 			idxBuf = idxBuf[bufBoundaryBytes:]
-			bin.PutUint32(idxBuf[0:4], uint32(now.Unix()))        // created at
-			bin.PutUint32(idxBuf[4:8], dataBufOffset)             // offset
-			bin.PutUint32(idxBuf[8:12], uint32(dataItemBufBytes)) // size
+			binary.LittleEndian.PutUint32(idxBuf[0:4], uint32(now.Unix()))        // created at
+			binary.LittleEndian.PutUint32(idxBuf[4:8], dataBufOffset)             // offset
+			binary.LittleEndian.PutUint32(idxBuf[8:12], uint32(dataItemBufBytes)) // size
 			idxBuf[12] = compressedFlagInIdx
 			idxBuf[13] = msg.Priority
-			bin.PutUint32(idxBuf[14:18], msg.BucketId)
-			bin.PutUint32(idxBuf[18:22], msg.DelayMs)
-			bin.PutUint32(idxBuf[22:26], msg.RetryCnt)
-			bin.PutUint64(idxBuf[26:34], origMaxMsgId+uint64(i+1))
-			bin.PutUint16(idxBuf[34:], bufBoundaryEnd)
+			binary.LittleEndian.PutUint32(idxBuf[14:18], msg.BucketId)
+			binary.LittleEndian.PutUint32(idxBuf[18:22], msg.DelayMs)
+			binary.LittleEndian.PutUint32(idxBuf[22:26], msg.RetryCnt)
+			binary.LittleEndian.PutUint64(idxBuf[26:34], origMaxMsgId+uint64(i+1))
+			binary.LittleEndian.PutUint16(idxBuf[34:], bufBoundaryEnd)
 			idxBuf = idxBuf[34+bufBoundaryBytes:]
 
 			dataBufOffset += uint32(dataItemBufBytes)
 		}
 
-		bin.PutUint16(o.dataUndoBuf[:bufBoundaryBytes], bufBoundaryBegin)
-		bin.PutUint64(o.dataUndoBuf[bufBoundaryBytes:], o.seq)
-		bin.PutUint32(o.dataUndoBuf[bufBoundaryBytes+8:], o.writtenDataBytes)
-		bin.PutUint16(o.dataUndoBuf[idxUndoBytes-bufBoundaryBytes:], bufBoundaryEnd)
-		var total int
-		for {
-			n, err := o.dataUndoFp.WriteAt(o.dataUndoBuf[total:], int64(total))
-			if err != nil {
-				return err
-			}
-
-			total += n
-
-			if total >= idxUndoBytes {
-				break
-			}
+		if err := o.logDataUndo(); err != nil {
+			return err
 		}
 
-		n, err := o.dataFp.Write(o.dataBuf[:dataBufBytes])
+		_, err := o.dataFp.Write(o.dataBuf[:dataBufBytes])
 		if err != nil {
 			if err := o.clearDataUndo(); err != nil {
 				panic(err)
@@ -300,30 +285,22 @@ func (o *output) write(msgList []*Msg) error {
 			panic(err)
 		}
 
-		bin.PutUint16(o.idxUndoBuf[:bufBoundaryBytes], bufBoundaryBegin)
-		bin.PutUint64(o.idxUndoBuf[bufBoundaryBytes:], o.seq)
-		bin.PutUint32(o.idxUndoBuf[bufBoundaryBytes+8:], o.writtenIdxNum)
-		bin.PutUint16(o.idxUndoBuf[idxUndoBytes-bufBoundaryBytes:], bufBoundaryEnd)
-		total = 0
-		for {
-			n, err = o.idxUndoFp.WriteAt(o.idxUndoBuf[total:], int64(total))
-			if err != nil {
-				return err
-			}
+		o.writtenDataBytes = dataBufBytes
 
-			total += n
-
-			if total >= idxUndoBytes {
-				break
-			}
+		if err = o.logIdxUndo(); err != nil {
+			return err
 		}
 
-		n, err = o.idxFp.Write(o.idxBuf[:idxBufBytes])
+		_, err = o.idxFp.Write(o.idxBuf[:idxBufBytes])
 		if err != nil {
+			if err := o.clearIdxUndo(); err != nil {
+				panic(err)
+			}
 			return err
 		}
 
 		origIdxFileBytes := o.writtenIdxNum * idxBytes
+
 		undoIdx := func() error {
 			if err = o.idxFp.Truncate(int64(origIdxFileBytes)); err != nil {
 				if err = os.Truncate(o.idxFp.Name(), int64(origIdxFileBytes)); err != nil {
@@ -355,6 +332,8 @@ func (o *output) write(msgList []*Msg) error {
 			panic(err)
 		}
 
+		o.writtenIdxNum += batchWriteIdxNum
+
 		for _, afterWriteCh := range o.afterWriteChs {
 			afterWriteCh <- o.seq
 		}
@@ -369,14 +348,14 @@ func (o *output) write(msgList []*Msg) error {
 		msgList = msgList[batchWriteIdxNum:]
 
 		// all msg been written
-		if !needSwitchNewFile || len(msgList) == 0 {
-			o.writtenIdxNum = accumIdxNum
-			o.writtenDataBytes = accumDataBytes
+		if len(msgList) == 0 {
 			break
 		}
 
-		if err = o.openNewFile(); err != nil {
-			return err
+		if needSwitchNewFile {
+			if err = o.openNewFile(); err != nil {
+				return err
+			}
 		}
 	}
 
@@ -395,10 +374,58 @@ func (o *output) close() {
 	o.openFileTime = time.Time{}
 }
 
+func (o *output) logIdxUndo() error {
+	binary.LittleEndian.PutUint16(o.idxUndoBuf[:bufBoundaryBytes], bufBoundaryBegin)
+	binary.LittleEndian.PutUint64(o.idxUndoBuf[bufBoundaryBytes:], o.seq)
+	binary.LittleEndian.PutUint32(o.idxUndoBuf[bufBoundaryBytes+8:], o.writtenIdxNum)
+	binary.LittleEndian.PutUint16(o.idxUndoBuf[idxUndoBytes-bufBoundaryBytes:], bufBoundaryEnd)
+	total := 0
+	for {
+		n, err := o.idxUndoFp.WriteAt(o.idxUndoBuf[total:], int64(total))
+		if err != nil {
+			if err := o.clearIdxUndo(); err != nil {
+				panic(err)
+			}
+			return err
+		}
+
+		total += n
+
+		if total >= idxUndoBytes {
+			break
+		}
+	}
+	return nil
+}
+
 func (o *output) clearIdxUndo() error {
 	if err := o.idxUndoFp.Truncate(0); err != nil {
 		if err = os.Truncate(o.idxUndoFp.Name(), 0); err != nil {
 			return err
+		}
+	}
+	return nil
+}
+
+func (o *output) logDataUndo() error {
+	binary.LittleEndian.PutUint16(o.dataUndoBuf[:bufBoundaryBytes], bufBoundaryBegin)
+	binary.LittleEndian.PutUint64(o.dataUndoBuf[bufBoundaryBytes:], o.seq)
+	binary.LittleEndian.PutUint32(o.dataUndoBuf[bufBoundaryBytes+8:], o.writtenDataBytes)
+	binary.LittleEndian.PutUint16(o.dataUndoBuf[idxUndoBytes-bufBoundaryBytes:], bufBoundaryEnd)
+	var total int
+	for {
+		n, err := o.dataUndoFp.WriteAt(o.dataUndoBuf[total:], int64(total))
+		if err != nil {
+			if err := o.clearDataUndo(); err != nil {
+				panic(err)
+			}
+			return err
+		}
+
+		total += n
+
+		if total >= idxUndoBytes {
+			break
 		}
 	}
 	return nil

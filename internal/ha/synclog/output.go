@@ -135,6 +135,11 @@ func (o *output) write(msgList []*Msg) error {
 
 		batchWriteIdxNum := accumIdxNum - o.writtenIdxNum
 
+		origMaxMsgId := o.msgIdGen.curMaxMsgId
+		if err := o.msgIdGen.Incr(uint64(batchWriteIdxNum)); err != nil {
+			return err
+		}
+
 		idxBufBytes := batchWriteIdxNum * idxBytes
 		if uint32(len(o.idxBuf)) < idxBufBytes {
 			o.idxBuf = make([]byte, idxBufBytes)
@@ -163,7 +168,7 @@ func (o *output) write(msgList []*Msg) error {
 			bin.PutUint32(idxBuf[0:4], msg.logItem.CreatedAt)     // created at
 			bin.PutUint32(idxBuf[4:8], dataBufOffset)             // offset
 			bin.PutUint32(idxBuf[8:12], uint32(dataItemBufBytes)) // size
-			bin.PutUint64(idxBuf[12:20], o.curMaxMsgId+uint64(i+1))
+			bin.PutUint64(idxBuf[12:20], origMaxMsgId+uint64(i+1))
 			bin.PutUint16(idxBuf[20:], bufBoundaryEnd)
 			idxBuf = idxBuf[20+bufBoundaryBytes:]
 
@@ -255,10 +260,6 @@ func (o *output) write(msgList []*Msg) error {
 				return err
 			}
 			n += more
-		}
-
-		if err = o.msgIdGen.Incr(uint64(batchWriteIdxNum)); err != nil {
-			return err
 		}
 
 		if !firstMsg.logItem.IsSyncFromMaster {
