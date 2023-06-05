@@ -20,25 +20,24 @@ import (
 
 var errConsumerNotRunning = errors.New("consumer not running")
 
-func newConsumer(baseDir string) (*Consumer, error) {
+func newConsumer(sync *Sync) (*Consumer, error) {
 	consumer := &Consumer{
-		baseDir:           baseDir,
+		Sync:              sync,
 		confirmMsgCh:      make(chan *confirmMsgReq),
 		unsubscribeSignCh: make(chan struct{}),
 	}
 
-	finishRec, err := newConsumeWaterMarkRec(baseDir)
+	var err error
+	consumer.finishRec, err = newConsumeWaterMarkRec(sync.baseDir)
 	if err != nil {
 		return nil, err
 	}
 
-	consumer.finishRec = finishRec
-
-	nOSeq, dateTimeSeq, idxNum := finishRec.getWaterMark()
-
+	nOSeq, dateTimeSeq, idxNum := consumer.finishRec.getWaterMark()
 	if nOSeq != 0 && dateTimeSeq != "" {
 		consumer.nextIdxCursor = idxNum
 
+		var err error
 		consumer.idxFp, err = MakeSeqIdxFp(consumer.baseDir, dateTimeSeq, nOSeq, os.O_CREATE|os.O_RDONLY)
 		if err != nil {
 			return nil, err
@@ -64,8 +63,8 @@ type confirmMsgReq struct {
 }
 
 type Consumer struct {
+	*Sync
 	discovery.Discovery
-	baseDir           string
 	status            runState
 	idxFp             *os.File
 	dataFp            *os.File
@@ -83,7 +82,7 @@ func (c *Consumer) Start() error {
 		return err
 	}
 
-	if c.isSubscribed() {
+	if c.IsRunning() {
 		return errors.New("already in running")
 	}
 
@@ -246,7 +245,7 @@ type PoppedMsgItem struct {
 }
 
 func (c *Consumer) consumeBatch() error {
-	if !c.isSubscribed() {
+	if !c.IsRunning() {
 		return errConsumerNotRunning
 	}
 
@@ -271,6 +270,8 @@ func (c *Consumer) consumeBatch() error {
 		if err != nil {
 			return err
 		}
+
+		item.IsSyncFromMaster = true
 
 		items = append(items, item)
 
@@ -308,11 +309,20 @@ func (c *Consumer) consumeBatch() error {
 	return nil
 }
 
-func (c *Consumer) unsubscribe() {
+func (c *Consumer) Exit() {
+	c.status = runStateExiting
 	c.unsubscribeSignCh <- struct{}{}
 }
 
-func (c *Consumer) isSubscribed() bool {
+func (c *Consumer) IsExiting() bool {
+	return c.status == runStateExiting
+}
+
+func (c *Consumer) IsExited() bool {
+	return c.status == runStateExited
+}
+
+func (c *Consumer) IsRunning() bool {
 	return c.status == runStateRunning
 }
 

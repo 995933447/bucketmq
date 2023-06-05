@@ -15,6 +15,7 @@ type msgIdGen struct {
 	baseDir     string
 	fp          *os.File
 	curMaxMsgId uint64
+	buf         [msgIdGenBytes]byte
 }
 
 func newMsgIdGen(baseDir string) (*msgIdGen, error) {
@@ -38,16 +39,14 @@ func newMsgIdGen(baseDir string) (*msgIdGen, error) {
 }
 
 func (r *msgIdGen) Incr(incr uint64) error {
-	maxId := r.curMaxMsgId + incr
-	var buf []byte
-	binary.LittleEndian.PutUint16(buf[:bufBoundaryBytes], bufBoundaryBegin)
-	binary.LittleEndian.PutUint64(buf[bufBoundaryBytes:bufBoundaryBytes+8], maxId)
-	binary.LittleEndian.PutUint16(buf[bufBoundaryEnd:], bufBoundaryEnd)
-	_, err := r.fp.Write(buf)
+	r.curMaxMsgId = r.curMaxMsgId + incr
+	binary.LittleEndian.PutUint16(r.buf[:bufBoundaryBytes], bufBoundaryBegin)
+	binary.LittleEndian.PutUint64(r.buf[bufBoundaryBytes:bufBoundaryBytes+8], r.curMaxMsgId)
+	binary.LittleEndian.PutUint16(r.buf[bufBoundaryEnd:], bufBoundaryEnd)
+	_, err := r.fp.Write(r.buf[:])
 	if err != nil {
 		return err
 	}
-	r.curMaxMsgId = maxId
 	return nil
 }
 

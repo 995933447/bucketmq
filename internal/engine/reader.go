@@ -121,8 +121,36 @@ func (r *reader) loadMsgIdxes() error {
 			startMsgId = r.startMsgId
 		}
 	} else if !r.readerGrp.isFirstBoot {
-		// seq equal to min msg id of idx file, so seq + idx offset = msg id
-		startMsgId = r.bootMarker.bootSeq + uint64(r.bootMarker.bootIdxOffset)
+		_, err := os.Stat(genIdxFileName(r.Subscriber.baseDir, r.Subscriber.topic, r.bootMarker.bootSeq))
+		if err != nil {
+			if !os.IsNotExist(err) {
+				return err
+			}
+
+			startMsgId, err = scanDirToParseNewestSeq(r.Subscriber.baseDir, r.Subscriber.topic)
+			if err != nil {
+				return err
+			}
+		}
+
+		if startMsgId == 0 {
+			firstConsumeFp, err := makeSeqIdxFp(r.Subscriber.baseDir, r.Subscriber.topic, r.bootMarker.bootSeq, os.O_RDONLY)
+			if err != nil {
+				return err
+			}
+
+			idxBuf := make([]byte, idxBytes)
+			n, err := firstConsumeFp.ReadAt(idxBuf, int64(r.bootMarker.bootIdxOffset*idxBytes))
+			if err != nil {
+				return err
+			}
+
+			if n < idxBytes {
+				return errFileCorrupted
+			}
+
+			startMsgId = binary.LittleEndian.Uint64(idxBuf[bufBoundaryBytes+26 : bufBoundaryBytes+34])
+		}
 	} else {
 		fileState, err := r.idxFp.Stat()
 		if err != nil {
@@ -230,10 +258,6 @@ func (r *reader) loadMsgIdxes() error {
 	}
 
 	return nil
-}
-
-func (r *reader) confirmMsg(idxOffset uint32) {
-	r.confirmMsgCh <- newConfirmedMsgIdx(idxOffset)
 }
 
 func (r *reader) close() {

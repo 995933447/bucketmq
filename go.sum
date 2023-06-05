@@ -1,5 +1,13 @@
 github.com/995933447/autoelectv2 v0.0.0-20230519044713-8420af506661 h1:Pmzl7p0IcPpGXeQvhaEBkar2yfwoQSK9Vbj9lLwRqcA=
 github.com/995933447/autoelectv2 v0.0.0-20230519044713-8420af506661/go.mod h1:smbZw5q6eIH7isEzoaZ7NKplZ9nniqrPW0Zwo58EV6g=
+github.com/995933447/autoelectv2 v0.0.0-20230530093650-e9a004ed5b0f h1:pQ4z7lugcBWlNkwZ3ggLo3dqUcGDiS6C4VhIxfckdl8=
+github.com/995933447/autoelectv2 v0.0.0-20230530093650-e9a004ed5b0f/go.mod h1:smbZw5q6eIH7isEzoaZ7NKplZ9nniqrPW0Zwo58EV6g=
+github.com/995933447/autoelectv2 v0.0.0-20230531090610-587170952567 h1:BP7Jj0UxwnX61pxfKhJfclSOi4Rt28fvtdtB4Vd6H8I=
+github.com/995933447/autoelectv2 v0.0.0-20230531090610-587170952567/go.mod h1:smbZw5q6eIH7isEzoaZ7NKplZ9nniqrPW0Zwo58EV6g=
+github.com/995933447/autoelectv2 v0.0.0-20230531095950-e3e840d58565 h1:+hHgcdSVs0NEtjEYsq4Sl41hBa3ZzeqRwTS7MRDW+Lg=
+github.com/995933447/autoelectv2 v0.0.0-20230531095950-e3e840d58565/go.mod h1:smbZw5q6eIH7isEzoaZ7NKplZ9nniqrPW0Zwo58EV6g=
+github.com/995933447/autoelectv2 v0.0.0-20230601052541-35b54c9d5daa h1:JI7dL++elxkWvruBWp6Xqk+1/BdylfNnllOTnvvn9rQ=
+github.com/995933447/autoelectv2 v0.0.0-20230601052541-35b54c9d5daa/go.mod h1:smbZw5q6eIH7isEzoaZ7NKplZ9nniqrPW0Zwo58EV6g=
 github.com/995933447/confloader v0.0.0-20230314141707-e7b191386ae2 h1:lElTU+vnP6+DR9W6kGbnHXL45zJsXFsWtvYt6bForCA=
 github.com/995933447/confloader v0.0.0-20230314141707-e7b191386ae2/go.mod h1:52j1FekZ42S3gc7Fy8A54Mr0H5MVbEbRLo8rG/HRY5U=
 github.com/995933447/elemutil v0.0.0-20230419031952-50d9019c3314 h1:0g/T8bmNw7tPBkDAKcklK7RoQRRVITFBN1YfQ8+BlN0=

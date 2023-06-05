@@ -11,10 +11,11 @@ import (
 // item begin marker | boot id | boot seq | boot idx offset | item end marker
 //
 //	2                |   4     |  8        |        4       |   2
-//
+const loadBootBytes = 20
 
 const (
-	LoadBootFileSuffix = ".boot"
+	LoadBootFileSuffix     = ".boot"
+	LoadBootUndoFileSuffix = ".boot"
 )
 
 func newBootMarker(readerGrp *readerGrp) (*bootMarker, error) {
@@ -35,6 +36,7 @@ func newBootMarker(readerGrp *readerGrp) (*bootMarker, error) {
 type bootMarker struct {
 	*readerGrp
 	fp            *os.File
+	undoFp        *os.File
 	bootId        uint32
 	bootSeq       uint64
 	bootIdxOffset uint32
@@ -67,26 +69,112 @@ func (b *bootMarker) load() error {
 func (b *bootMarker) mark(bootId uint32, seq uint64, idxOffset uint32) error {
 	now := time.Now().Unix()
 
-	var buf []byte
+	undoBuf := make([]byte, loadBootBytes)
+	n, err := b.fp.Read(undoBuf)
+	if err != nil {
+		if err != io.EOF {
+			return err
+		}
+	}
+
+	if n > 0 {
+		var total int
+		for {
+			n, err = b.undoFp.WriteAt(undoBuf[total:], int64(total))
+			if err != nil {
+				return err
+			}
+
+			total += n
+
+			if total >= loadBootBytes {
+				break
+			}
+		}
+	}
+
+	undo := func() error {
+		if n == 0 {
+			if err := b.fp.Truncate(0); err != nil {
+				if err = os.Truncate(b.fp.Name(), 0); err != nil {
+					return err
+				}
+			}
+			return nil
+		}
+
+		var total int
+		for {
+			n, err = b.fp.WriteAt(undoBuf[total:], int64(total))
+			if err != nil {
+				return err
+			}
+
+			total += n
+
+			if total >= loadBootBytes {
+				break
+			}
+		}
+
+		if err := b.clearUndo(); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
+	buf := make([]byte, loadBootBytes)
 	binary.LittleEndian.PutUint16(buf[:bufBoundaryBytes], bufBoundaryBegin)
 	binary.LittleEndian.PutUint32(buf[bufBoundaryBytes:bufBoundaryBytes+4], bootId)
 	binary.LittleEndian.PutUint64(buf[bufBoundaryBytes+4:bufBoundaryBytes+12], seq)
 	binary.LittleEndian.PutUint32(buf[bufBoundaryBytes+12:bufBoundaryBytes+16], idxOffset)
 	binary.LittleEndian.PutUint16(buf[bufBoundaryEnd+16:], bufBoundaryEnd)
-	_, err := b.fp.Write(buf)
-	if err != nil {
-		return err
+	var total int
+	for {
+		n, err = b.fp.WriteAt(buf[total:], int64(total))
+		if err != nil {
+			if err := undo(); err != nil {
+				return err
+			}
+			return err
+		}
+
+		total += n
+
+		if total >= loadBootBytes {
+			break
+		}
 	}
 
-	OnAnyFileWritten(b.fp.Name(), buf, &ExtraOfFileWritten{
+	err = OnOutputFile(b.fp.Name(), buf, 0, &OutputExtra{
 		Topic:            b.Subscriber.topic,
 		Subscriber:       b.Subscriber.name,
 		ContentCreatedAt: uint32(now),
 	})
+	if err != nil {
+		if err := undo(); err != nil {
+			return err
+		}
+		return err
+	}
+
+	if err := b.clearUndo(); err != nil {
+		return err
+	}
 
 	b.bootId = bootId
 	b.bootSeq = seq
 	b.bootIdxOffset = idxOffset
 
+	return nil
+}
+
+func (b *bootMarker) clearUndo() error {
+	if err := b.undoFp.Truncate(0); err != nil {
+		if err = os.Truncate(b.undoFp.Name(), 0); err != nil {
+			return err
+		}
+	}
 	return nil
 }

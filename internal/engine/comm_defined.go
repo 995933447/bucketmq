@@ -29,10 +29,12 @@ const (
 	bufBoundaryEnd     = uint16(0x5678)
 )
 
-type ExtraOfFileWritten struct {
+type OutputExtra struct {
 	Topic            string
 	Subscriber       string
 	ContentCreatedAt uint32
 }
 
-var OnAnyFileWritten = func(fileName string, buf []byte, extra *ExtraOfFileWritten) {}
+var OnOutputFile = func(fileName string, buf []byte, fileOffset uint32, extra *OutputExtra) error {
+	return nil
+}

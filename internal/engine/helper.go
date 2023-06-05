@@ -8,20 +8,40 @@ import (
 	"time"
 )
 
+func genIdxUndoFileName(baseDir, topic string) string {
+	return fmt.Sprintf("%s/%s"+IdxUndoFileSuffix, GetTopicFileDir(baseDir, topic), time.Now().Format("2006010215"))
+}
+
 func genIdxFileName(baseDir, topic string, seq uint64) string {
 	return fmt.Sprintf("%s/%s_%d"+IdxFileSuffix, GetTopicFileDir(baseDir, topic), time.Now().Format("2006010215"), seq)
+}
+
+func genDataUndoFileName(baseDir, topic string) string {
+	return fmt.Sprintf("%s/%s"+DataUndoFileSuffix, GetTopicFileDir(baseDir, topic), time.Now().Format("2006010215"))
 }
 
 func genDataFileName(baseDir, topic string, seq uint64) string {
 	return fmt.Sprintf("%s/%s_%d"+DataFileSuffix, GetTopicFileDir(baseDir, topic), time.Now().Format("2006010215"), seq)
 }
 
-func genFinishRcFileName(baseDir, topic, subscriber string) string {
-	return fmt.Sprintf("%s/%s"+FinishFileSuffix, GetSubscriberFileDir(baseDir, topic, subscriber), time.Now().Format("2006010215"))
+func genFinishRcUndoFileName(baseDir, topic, subscriber string, seq uint64) string {
+	return fmt.Sprintf("%s/%s_%d"+FinishUndoFileSuffix, GetSubscriberFileDir(baseDir, topic, subscriber), time.Now().Format("2006010215"), seq)
+}
+
+func genFinishRcFileName(baseDir, topic, subscriber string, seq uint64) string {
+	return fmt.Sprintf("%s/%s_%d"+FinishFileSuffix, GetSubscriberFileDir(baseDir, topic, subscriber), time.Now().Format("2006010215"), seq)
+}
+
+func genMsgIdUndoFileName(baseDir, topic string) string {
+	return fmt.Sprintf("%s/%s"+MsgIdUndoFileSuffix, GetTopicFileDir(baseDir, topic), time.Now().Format("2006010215"))
 }
 
 func genMsgIdFileName(baseDir, topic string) string {
 	return fmt.Sprintf("%s/%s"+MsgIdFileSuffix, GetTopicFileDir(baseDir, topic), time.Now().Format("2006010215"))
+}
+
+func genLoadBootUndoFileName(baseDir, topic, subscriber string) string {
+	return fmt.Sprintf("%s/%s"+LoadBootUndoFileSuffix, GetSubscriberFileDir(baseDir, topic, subscriber), time.Now().Format("2006010215"))
 }
 
 func genLoadBootFileName(baseDir, topic, subscriber string) string {
@@ -47,6 +67,28 @@ func mkdirIfNotExist(dir string) error {
 		}
 	}
 	return nil
+}
+
+func makeIdxUndoFp(baseDir, topic string) (*os.File, error) {
+	dir := GetTopicFileDir(baseDir, topic)
+	if err := mkdirIfNotExist(dir); err != nil {
+		return nil, err
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), IdxFileSuffix) {
+			continue
+		}
+
+		return os.OpenFile(dir+"/"+file.Name(), os.O_RDWR, os.ModePerm)
+	}
+
+	return os.OpenFile(genIdxUndoFileName(baseDir, topic), os.O_CREATE|os.O_RDWR, os.ModePerm)
 }
 
 func makeSeqIdxFp(baseDir, topic string, seq uint64, flag int) (*os.File, error) {
@@ -129,6 +171,28 @@ func makeSeqDataFp(baseDir, topic string, seq uint64, flag int) (*os.File, error
 	return os.OpenFile(genDataFileName(baseDir, topic, seq), flag, os.ModePerm)
 }
 
+func makeDataUndoFp(baseDir, topic string) (*os.File, error) {
+	dir := GetTopicFileDir(baseDir, topic)
+	if err := mkdirIfNotExist(dir); err != nil {
+		return nil, err
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), DataUndoFileSuffix) {
+			continue
+		}
+
+		return os.OpenFile(dir+"/"+file.Name(), os.O_RDWR, os.ModePerm)
+	}
+
+	return os.OpenFile(genDataUndoFileName(baseDir, topic), os.O_CREATE|os.O_RDWR, os.ModePerm)
+}
+
 func makeLoadBootFp(baseDir, topic, subscriber string) (*os.File, error) {
 	dir := GetSubscriberFileDir(baseDir, topic, subscriber)
 
@@ -142,7 +206,7 @@ func makeLoadBootFp(baseDir, topic, subscriber string) (*os.File, error) {
 	}
 
 	for _, file := range files {
-		if !strings.HasSuffix(file.Name(), FinishFileSuffix) {
+		if !strings.HasSuffix(file.Name(), LoadBootFileSuffix) {
 			continue
 		}
 
@@ -155,6 +219,34 @@ func makeLoadBootFp(baseDir, topic, subscriber string) (*os.File, error) {
 	}
 
 	return os.OpenFile(genLoadBootFileName(baseDir, topic, subscriber), os.O_CREATE|os.O_RDWR, os.ModePerm)
+}
+
+func makeLoadBootUndoFp(baseDir, topic, subscriber string) (*os.File, error) {
+	dir := GetSubscriberFileDir(baseDir, topic, subscriber)
+
+	if err := mkdirIfNotExist(dir); err != nil {
+		return nil, err
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), LoadBootUndoFileSuffix) {
+			continue
+		}
+
+		fp, err := os.OpenFile(dir+"/"+file.Name(), os.O_RDWR, os.ModePerm)
+		if err != nil {
+			return nil, err
+		}
+
+		return fp, nil
+	}
+
+	return os.OpenFile(genLoadBootUndoFileName(baseDir, topic, subscriber), os.O_CREATE|os.O_RDWR, os.ModePerm)
 }
 
 func makeMsgIdFp(baseDir, topic string) (*os.File, bool, error) {
@@ -190,7 +282,40 @@ func makeMsgIdFp(baseDir, topic string) (*os.File, bool, error) {
 	return fp, true, nil
 }
 
-func makeFinishRcFp(baseDir, topic, subscriber string) (*os.File, error) {
+func makeMsgIdUndoFp(baseDir, topic string) (*os.File, error) {
+	dir := GetTopicFileDir(baseDir, topic)
+
+	if err := mkdirIfNotExist(dir); err != nil {
+		return nil, err
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), MsgIdUndoFileSuffix) {
+			continue
+		}
+
+		fp, err := os.OpenFile(dir+"/"+file.Name(), os.O_RDWR, os.ModePerm)
+		if err != nil {
+			return nil, err
+		}
+
+		return fp, nil
+	}
+
+	fp, err := os.OpenFile(genMsgIdUndoFileName(baseDir, topic), os.O_CREATE|os.O_RDWR, os.ModePerm)
+	if err != nil {
+		return nil, err
+	}
+
+	return fp, nil
+}
+
+func makeFinishRcFp(baseDir, topic, subscriber string, seq uint64) (*os.File, error) {
 	dir := GetSubscriberFileDir(baseDir, topic, subscriber)
 
 	if err := mkdirIfNotExist(dir); err != nil {
@@ -207,7 +332,21 @@ func makeFinishRcFp(baseDir, topic, subscriber string) (*os.File, error) {
 			continue
 		}
 
-		fp, err := os.OpenFile(dir+"/"+file.Name(), os.O_RDWR, os.ModePerm)
+		seqStr, ok := parseFileSeqStr(file)
+		if !ok {
+			continue
+		}
+
+		curSeq, err := strconv.ParseUint(seqStr, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+
+		if curSeq != seq {
+			continue
+		}
+
+		fp, err := os.OpenFile(dir+"/"+file.Name(), os.O_RDWR|os.O_APPEND, os.ModePerm)
 		if err != nil {
 			return nil, err
 		}
@@ -215,7 +354,49 @@ func makeFinishRcFp(baseDir, topic, subscriber string) (*os.File, error) {
 		return fp, nil
 	}
 
-	return os.OpenFile(genFinishRcFileName(baseDir, topic, subscriber), os.O_CREATE|os.O_RDWR, os.ModePerm)
+	return os.OpenFile(genFinishRcFileName(baseDir, topic, subscriber, seq), os.O_CREATE|os.O_RDWR|os.O_APPEND, os.ModePerm)
+}
+
+func makeFinishRcUndoFp(baseDir, topic, subscriber string, seq uint64) (*os.File, error) {
+	dir := GetSubscriberFileDir(baseDir, topic, subscriber)
+
+	if err := mkdirIfNotExist(dir); err != nil {
+		return nil, err
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, err
+	}
+
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), FinishUndoFileSuffix) {
+			continue
+		}
+
+		seqStr, ok := parseFileSeqStr(file)
+		if !ok {
+			continue
+		}
+
+		curSeq, err := strconv.ParseUint(seqStr, 10, 64)
+		if err != nil {
+			return nil, err
+		}
+
+		if curSeq != seq {
+			continue
+		}
+
+		fp, err := os.OpenFile(dir+"/"+file.Name(), os.O_RDWR|os.O_APPEND, os.ModePerm)
+		if err != nil {
+			return nil, err
+		}
+
+		return fp, nil
+	}
+
+	return os.OpenFile(genFinishRcUndoFileName(baseDir, topic, subscriber, seq), os.O_CREATE|os.O_RDWR|os.O_APPEND, os.ModePerm)
 }
 
 func scanDirToParseOldestSeq(baseDir, topic string) (uint64, error) {

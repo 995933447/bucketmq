@@ -60,7 +60,9 @@ func main() {
 		panic(err)
 	}
 
-	onMsgFileWritten(synclog.NewWriter(sysCfg.DataDir))
+	if err = initHALogSync(); err != nil {
+		panic(err)
+	}
 
 	topicMgr, err := mgr.NewTopicMgr(etcdCli, disc, func(topic, subscriber, consumer string, timeout time.Duration, msg *engine.FileMsg) error {
 		if _, err := consumerService.Consume(consumer, topic, subscriber, timeout, msg); err != nil {
@@ -104,20 +106,26 @@ func main() {
 	}
 }
 
-func onMsgFileWritten(hASyncLogger *synclog.Writer) {
-	engine.OnAnyFileWritten = func(fileName string, buf []byte, extra *engine.ExtraOfFileWritten) {
+func initHALogSync() error {
+	hALogSync, err := synclog.NewSync(syscfg.MustCfg().DataDir)
+	if err != nil {
+		return err
+	}
+
+	engine.OnOutputFile = func(fileName string, buf []byte, fileOffset uint32, extra *engine.OutputExtra) error {
 		var syncMsgLogItem *ha.SyncMsgFileLogItem
 
 		if extra.Topic == "" && extra.Subscriber == "" {
-			return
+			return nil
 		}
 
 		if extra.Subscriber == "" {
 			syncMsgLogItem = &ha.SyncMsgFileLogItem{
-				Topic:     extra.Topic,
-				FileBuf:   buf,
-				FileName:  fileName,
-				CreatedAt: extra.ContentCreatedAt,
+				Topic:      extra.Topic,
+				FileBuf:    buf,
+				FileName:   fileName,
+				CreatedAt:  extra.ContentCreatedAt,
+				FileOffset: fileOffset,
 			}
 		} else {
 			syncMsgLogItem = &ha.SyncMsgFileLogItem{
@@ -126,6 +134,7 @@ func onMsgFileWritten(hASyncLogger *synclog.Writer) {
 				FileBuf:    buf,
 				FileName:   fileName,
 				CreatedAt:  extra.ContentCreatedAt,
+				FileOffset: fileOffset,
 			}
 		}
 
@@ -142,8 +151,14 @@ func onMsgFileWritten(hASyncLogger *synclog.Writer) {
 			syncMsgLogItem.MsgFileType = ha.MsgFileType_MsgFileTypeMsgId
 		}
 
-		hASyncLogger.Write(syncMsgLogItem)
+		if err := hALogSync.Write(syncMsgLogItem); err != nil {
+			return err
+		}
+
+		return nil
 	}
+
+	return nil
 }
 
 func parseCmdToInitSysCfg() error {

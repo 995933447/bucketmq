@@ -3,7 +3,6 @@ package cli
 import (
 	"context"
 	"encoding/json"
-	"github.com/995933447/bucketmq/internal/util"
 	"github.com/995933447/bucketmq/pkg/discover"
 	"github.com/995933447/bucketmq/pkg/rpc/broker"
 	"github.com/995933447/bucketmq/pkg/rpc/consumer"
@@ -50,27 +49,35 @@ func (c *Consumer) Subscribe(cfg *broker.Subscriber, handleFunc snrpc.HandleMsgF
 				return err
 			}
 
-			brokerCfg, err := c.cli.discovery.Discover(context.Background(), discover.SrvNameBroker)
 			var destNode *discovery.Node
-			for _, node := range brokerCfg.Nodes {
-				if !node.Available() {
-					continue
+			for {
+				brokerCfg, err := c.cli.discovery.Discover(context.Background(), discover.SrvNameBroker)
+				for _, node := range brokerCfg.Nodes {
+					if !node.Available() {
+						continue
+					}
+
+					var nodeDesc ha.Node
+					err = json.Unmarshal([]byte(node.Extra), &nodeDesc)
+					if err != nil {
+						return err
+					}
+
+					if nodeDesc.NodeGrp != getTopicResp.Topic.NodeGrp {
+						continue
+					}
+
+					if nodeDesc.IsMaster {
+						destNode = node
+						break
+					}
 				}
 
-				var nodeDesc ha.Node
-				err = json.Unmarshal([]byte(node.Extra), &nodeDesc)
-				if err != nil {
-					return err
-				}
-
-				if nodeDesc.NodeGrp != getTopicResp.Topic.NodeGrp {
-					continue
-				}
-
-				if nodeDesc.IsMaster {
-					destNode = node
+				if destNode != nil {
 					break
 				}
+
+				time.Sleep(time.Second)
 			}
 
 			snrpcCli, err := snrpc.NewCli(destNode.Host, destNode.Port, func(err error) {
@@ -80,7 +87,6 @@ func (c *Consumer) Subscribe(cfg *broker.Subscriber, handleFunc snrpc.HandleMsgF
 				for i := 0; i < 3; i++ {
 					if err = connectSNPRPCSrv(); err != nil {
 						if i < 2 {
-							util.Logger.Warnf(nil, "consumer:%s connect broker failed, retry after %d seconds", c.name, i*5)
 							time.Sleep(time.Second * time.Duration(i*5))
 							continue
 						}

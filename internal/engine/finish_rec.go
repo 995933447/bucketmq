@@ -7,14 +7,24 @@ import (
 	"time"
 )
 
-const FinishFileSuffix = ".fin"
+const (
+	FinishFileSuffix     = ".fin"
+	FinishUndoFileSuffix = ".fin_wal"
+)
 
+// finish record format is:
 // item begin marker  | idx offset | item end marker
 //
 //	2                 |   4        | 	   2
+// undo finish record format is:
+// item begin marker  | confirmed num | item end marker
+//
+//	2                 |   4           | 	   2
+
 const (
 	idxOffsetInFinishIdxBufBytes = 4
 	finishIdxBufBytes            = 4 + bufBoundariesBytes
+	finishIdxUndoBufBytes        = 4 + bufBoundariesBytes
 )
 
 type confirmedMsgIdx struct {
@@ -39,7 +49,12 @@ func newFinishRec(r *reader) (*finishRec, error) {
 		return nil, err
 	}
 
-	rec.fp, err = makeFinishRcFp(r.reader.readerGrp.Subscriber.baseDir, r.reader.readerGrp.Subscriber.topic, r.reader.readerGrp.Subscriber.name)
+	rec.fp, err = makeFinishRcFp(r.reader.readerGrp.Subscriber.baseDir, r.reader.readerGrp.Subscriber.topic, r.reader.readerGrp.Subscriber.name, r.seq)
+	if err != nil {
+		return nil, err
+	}
+
+	rec.undoFp, err = makeFinishRcUndoFp(r.reader.readerGrp.Subscriber.baseDir, r.reader.readerGrp.Subscriber.topic, r.reader.readerGrp.Subscriber.name, r.seq)
 	if err != nil {
 		return nil, err
 	}
@@ -51,7 +66,9 @@ type finishRec struct {
 	*reader
 	fp       *os.File
 	idxFp    *os.File
+	undoFp   *os.File
 	buf      []byte
+	undoBuf  [finishIdxUndoBufBytes]byte
 	msgIdxes map[uint32]struct{}
 }
 
@@ -117,6 +134,40 @@ func (r *finishRec) load() error {
 func (r *finishRec) confirm(confirmedList []*confirmedMsgIdx) error {
 	now := time.Now().Unix()
 
+	origFinishedNum := len(r.msgIdxes)
+	binary.LittleEndian.PutUint16(r.undoBuf[:bufBoundaryBytes], bufBoundaryBegin)
+	binary.LittleEndian.PutUint32(r.undoBuf[bufBoundaryBytes:bufBoundaryBytes+idxOffsetInFinishIdxBufBytes], uint32(origFinishedNum))
+	binary.LittleEndian.PutUint16(r.undoBuf[finishIdxBufBytes-bufBoundaryBytes:], bufBoundaryEnd)
+	var total int
+	for {
+		n, err := r.undoFp.WriteAt(r.undoBuf[:total], int64(total))
+		if err != nil {
+			return err
+		}
+
+		total += n
+
+		if total >= idxUndoBytes {
+			break
+		}
+	}
+
+	undo := func() error {
+		origFileBytes := int64(origFinishedNum * finishIdxBufBytes)
+		if err := r.fp.Truncate(origFileBytes); err != nil {
+			if err = os.Truncate(r.fp.Name(), origFileBytes); err != nil {
+				return err
+			}
+			return err
+		}
+
+		if err := r.clearUndo(); err != nil {
+			return err
+		}
+
+		return nil
+	}
+
 	needBufLen := len(confirmedList) * finishIdxBufBytes
 	needExpandBuf := len(r.buf) < needBufLen
 	if needExpandBuf {
@@ -124,38 +175,50 @@ func (r *finishRec) confirm(confirmedList []*confirmedMsgIdx) error {
 	}
 
 	buf := r.buf
-	bin := binary.LittleEndian
 	for _, confirmed := range confirmedList {
-		bin.PutUint16(buf[:bufBoundaryBytes], bufBoundaryBegin)
-		bin.PutUint32(buf[bufBoundaryBytes:bufBoundaryBytes+idxOffsetInFinishIdxBufBytes], confirmed.idxOffset)
-		bin.PutUint16(buf[finishIdxBufBytes-bufBoundaryBytes:], bufBoundaryEnd)
+		binary.LittleEndian.PutUint16(buf[:bufBoundaryBytes], bufBoundaryBegin)
+		binary.LittleEndian.PutUint32(buf[bufBoundaryBytes:bufBoundaryBytes+idxOffsetInFinishIdxBufBytes], confirmed.idxOffset)
+		binary.LittleEndian.PutUint16(buf[finishIdxBufBytes-bufBoundaryBytes:], bufBoundaryEnd)
 		buf = buf[finishIdxBufBytes:]
 	}
-
-	var total int
-	for {
-		n, err := r.fp.Write(r.buf[total:needBufLen])
-		if err != nil {
+	_, err := r.fp.Write(r.buf[:])
+	if err != nil {
+		if err = undo(); err != nil {
 			return err
 		}
-
-		total += n
-
-		if total >= needBufLen {
-			break
-		}
+		return err
 	}
 
-	OnAnyFileWritten(r.fp.Name(), buf, &ExtraOfFileWritten{
+	err = OnOutputFile(r.fp.Name(), buf, uint32(len(r.msgIdxes)*finishIdxBufBytes), &OutputExtra{
 		Topic:            r.Subscriber.topic,
 		Subscriber:       r.Subscriber.name,
 		ContentCreatedAt: uint32(now),
 	})
+	if err != nil {
+		if err = undo(); err != nil {
+			return err
+		}
+		return err
+	}
+
+	if err = r.clearUndo(); err != nil {
+		return err
+	}
 
 	for _, confirmed := range confirmedList {
 		r.msgIdxes[confirmed.idxOffset] = struct{}{}
 	}
 
+	return nil
+}
+
+func (r *finishRec) clearUndo() error {
+	if err := r.undoFp.Truncate(0); err != nil {
+		if err = os.Truncate(r.undoFp.Name(), 0); err != nil {
+			return err
+		}
+		return err
+	}
 	return nil
 }
 

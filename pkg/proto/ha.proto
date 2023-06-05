@@ -23,6 +23,7 @@ message Node {
     string node_grp = 1;
     bool is_master = 2;
     uint64 max_synced_log_id = 3;
+    uint64 term_of_max_synced_log = 4;
 }
 
 message SyncMsgFileLogItem {
@@ -32,7 +33,9 @@ message SyncMsgFileLogItem {
     MsgFileType msg_file_type = 4;
     string file_name = 5;
     uint32 created_at = 6;
-    uint64 log_id = 7;
+    uint32 file_offset = 7;
+    uint64 log_id = 8;
+    bool is_sync_from_master = 9;
 }
 
 message SyncRemoteReplicaReq {

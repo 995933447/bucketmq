@@ -13,18 +13,31 @@ import (
 //
 //	2                |   V  |       2
 //
-// index file format is
+// index file format is:
 // item begin marker | created at | data offset | data len |  enabled compress |   priority  | bucketId | delay sec | retryCnt | msgId | item end marker
 //
 //	2                |      4     |   4         |      4   |        1          |       1	 |      4   |	   4     |  4      |   8   |   2
-
+//
+// undo index file format is:
+// item begin marker | seq | idx num  | item end marker
+//
+//	2                |  8  |   4      |   2
+//
+// undo data file format is:
+// item begin marker | seq | size  | item end marker
+//
+//	2                |  8  |   4   |   2
 const (
-	idxBytes = 38
+	idxBytes      = 38
+	idxUndoBytes  = 16
+	dataUndoBytes = 16
 )
 
 const (
-	IdxFileSuffix  = ".idx"
-	DataFileSuffix = ".dat"
+	IdxFileSuffix      = ".idx"
+	DataFileSuffix     = ".dat"
+	IdxUndoFileSuffix  = ".idx_undo"
+	DataUndoFileSuffix = ".dat_undo"
 )
 
 func newOutput(writer *Writer, seq uint64) (*output, error) {
@@ -37,20 +50,32 @@ func newOutput(writer *Writer, seq uint64) (*output, error) {
 	if err != nil {
 		return nil, err
 	}
+	out.idxUndoFp, err = makeIdxUndoFp(out.Writer.baseDir, out.Writer.topic)
+	if err != nil {
+		return nil, err
+	}
+	out.dataUndoFp, err = makeDataUndoFp(out.Writer.baseDir, out.Writer.topic)
+	if err != nil {
+		return nil, err
+	}
 	return out, nil
 }
 
 type output struct {
 	*Writer
-	seq    uint64
-	idxFp  *os.File
-	dataFp *os.File
 	*msgIdGen
+	seq              uint64
+	idxFp            *os.File
+	dataFp           *os.File
+	idxUndoFp        *os.File
+	dataUndoFp       *os.File
 	writtenIdxNum    uint32
 	writtenDataBytes uint32
 	openFileTime     time.Time
 	idxBuf           []byte
 	dataBuf          []byte
+	idxUndoBuf       [idxUndoBytes]byte
+	dataUndoBuf      [dataUndoBytes]byte
 }
 
 func (o *output) isCorrupted() (bool, error) {
@@ -103,10 +128,6 @@ func (o *output) syncDisk() {
 	}
 }
 
-func (o *output) isAtSameHourSinceLastOpenFile() bool {
-	return o.openFileTime.Format("2006010215") == time.Now().Format("2006010215")
-}
-
 func (o *output) write(msgList []*Msg) error {
 	if len(msgList) == 0 {
 		return nil
@@ -130,7 +151,6 @@ func (o *output) write(msgList []*Msg) error {
 	bin := binary.LittleEndian
 	for {
 		accumIdxNum := o.writtenIdxNum
-		oldAccumIdxNum := o.writtenIdxNum
 		accumDataBytes := o.writtenDataBytes
 		var (
 			msg               *Msg
@@ -159,7 +179,7 @@ func (o *output) write(msgList []*Msg) error {
 			break
 		}
 
-		batchWriteIdxNum := accumIdxNum - oldAccumIdxNum
+		batchWriteIdxNum := accumIdxNum - o.writtenIdxNum
 
 		// file had reached max size
 		if batchWriteIdxNum <= 0 {
@@ -167,6 +187,11 @@ func (o *output) write(msgList []*Msg) error {
 				return err
 			}
 			continue
+		}
+
+		origMaxMsgId := o.msgIdGen.curMaxMsgId
+		if err := o.msgIdGen.Incr(uint64(batchWriteIdxNum)); err != nil {
+			return err
 		}
 
 		idxBufBytes := batchWriteIdxNum * idxBytes
@@ -214,53 +239,124 @@ func (o *output) write(msgList []*Msg) error {
 			bin.PutUint32(idxBuf[14:18], msg.BucketId)
 			bin.PutUint32(idxBuf[18:22], msg.DelayMs)
 			bin.PutUint32(idxBuf[22:26], msg.RetryCnt)
-			bin.PutUint64(idxBuf[26:34], o.curMaxMsgId+uint64(i+1))
+			bin.PutUint64(idxBuf[26:34], origMaxMsgId+uint64(i+1))
 			bin.PutUint16(idxBuf[34:], bufBoundaryEnd)
 			idxBuf = idxBuf[34+bufBoundaryBytes:]
 
 			dataBufOffset += uint32(dataItemBufBytes)
 		}
 
-		n, err := o.dataFp.Write(o.dataBuf[:dataBufBytes])
-		if err != nil {
-			return err
-		}
-		for uint32(n) < dataBufBytes {
-			more, err := o.dataFp.Write(o.dataBuf[n:dataBufBytes])
+		bin.PutUint16(o.dataUndoBuf[:bufBoundaryBytes], bufBoundaryBegin)
+		bin.PutUint64(o.dataUndoBuf[bufBoundaryBytes:], o.seq)
+		bin.PutUint32(o.dataUndoBuf[bufBoundaryBytes+8:], o.writtenDataBytes)
+		bin.PutUint16(o.dataUndoBuf[idxUndoBytes-bufBoundaryBytes:], bufBoundaryEnd)
+		var total int
+		for {
+			n, err := o.dataUndoFp.WriteAt(o.dataUndoBuf[total:], int64(total))
 			if err != nil {
 				return err
 			}
-			n += more
+
+			total += n
+
+			if total >= idxUndoBytes {
+				break
+			}
 		}
 
-		OnAnyFileWritten(o.dataFp.Name(), o.dataBuf[:dataBufBytes], &ExtraOfFileWritten{
+		n, err := o.dataFp.Write(o.dataBuf[:dataBufBytes])
+		if err != nil {
+			if err := o.clearDataUndo(); err != nil {
+				panic(err)
+			}
+			return err
+		}
+
+		undoData := func() error {
+			if err = o.dataFp.Truncate(int64(o.writtenDataBytes)); err != nil {
+				if err = os.Truncate(o.dataFp.Name(), int64(o.writtenDataBytes)); err != nil {
+					return err
+				}
+			}
+			if err = o.clearDataUndo(); err != nil {
+				return err
+			}
+			return nil
+		}
+
+		err = OnOutputFile(o.dataFp.Name(), o.dataBuf[:dataBufBytes], o.writtenDataBytes, &OutputExtra{
 			Topic:            o.Writer.topic,
 			ContentCreatedAt: uint32(now.Unix()),
 		})
+		if err != nil {
+			// rollback
+			if err := undoData(); err != nil {
+				panic(err)
+			}
+			return err
+		}
+
+		if err = o.clearDataUndo(); err != nil {
+			panic(err)
+		}
+
+		bin.PutUint16(o.idxUndoBuf[:bufBoundaryBytes], bufBoundaryBegin)
+		bin.PutUint64(o.idxUndoBuf[bufBoundaryBytes:], o.seq)
+		bin.PutUint32(o.idxUndoBuf[bufBoundaryBytes+8:], o.writtenIdxNum)
+		bin.PutUint16(o.idxUndoBuf[idxUndoBytes-bufBoundaryBytes:], bufBoundaryEnd)
+		total = 0
+		for {
+			n, err = o.idxUndoFp.WriteAt(o.idxUndoBuf[total:], int64(total))
+			if err != nil {
+				return err
+			}
+
+			total += n
+
+			if total >= idxUndoBytes {
+				break
+			}
+		}
 
 		n, err = o.idxFp.Write(o.idxBuf[:idxBufBytes])
 		if err != nil {
 			return err
 		}
-		for uint32(n) < idxBufBytes {
-			more, err := o.idxFp.Write(o.idxBuf[n:idxBufBytes])
-			if err != nil {
+
+		origIdxFileBytes := o.writtenIdxNum * idxBytes
+		undoIdx := func() error {
+			if err = o.idxFp.Truncate(int64(origIdxFileBytes)); err != nil {
+				if err = os.Truncate(o.idxFp.Name(), int64(origIdxFileBytes)); err != nil {
+					return err
+				}
+			}
+
+			if err = o.clearIdxUndo(); err != nil {
 				return err
 			}
-			n += more
+
+			return nil
 		}
 
-		OnAnyFileWritten(o.dataFp.Name(), o.dataBuf[:dataBufBytes], &ExtraOfFileWritten{
+		err = OnOutputFile(o.idxFp.Name(), o.idxBuf[:idxBufBytes], origIdxFileBytes, &OutputExtra{
 			Topic:            o.Writer.topic,
 			ContentCreatedAt: uint32(now.Unix()),
 		})
+		if err != nil {
+			// data file has callback success, only rollback index file
+			if err := undoIdx(); err != nil {
+				panic(err)
+			}
+
+			return err
+		}
+
+		if err = o.clearIdxUndo(); err != nil {
+			panic(err)
+		}
 
 		for _, afterWriteCh := range o.afterWriteChs {
 			afterWriteCh <- o.seq
-		}
-
-		if err := o.msgIdGen.Incr(uint64(batchWriteIdxNum)); err != nil {
-			return err
 		}
 
 		for _, msg := range waitingResMsgList {
@@ -297,6 +393,24 @@ func (o *output) close() {
 	o.writtenDataBytes = 0
 	o.writtenIdxNum = 0
 	o.openFileTime = time.Time{}
+}
+
+func (o *output) clearIdxUndo() error {
+	if err := o.idxUndoFp.Truncate(0); err != nil {
+		if err = os.Truncate(o.idxUndoFp.Name(), 0); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (o *output) clearDataUndo() error {
+	if err := o.dataUndoFp.Truncate(0); err != nil {
+		if err = os.Truncate(o.dataUndoFp.Name(), 0); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (o *output) openNewFile() error {

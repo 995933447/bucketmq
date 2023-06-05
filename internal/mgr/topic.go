@@ -30,7 +30,7 @@ type TopicCfg struct {
 	NodeGrp     string
 	MaxMsgBytes uint32
 
-	version int64
+	etcdModVersion int64
 }
 
 type SubscriberCfg struct {
@@ -46,7 +46,7 @@ type SubscriberCfg struct {
 	IsSerial                     bool
 	MaxConsumeMs                 uint32
 
-	version int64
+	etcdModVersion int64
 }
 
 type topic struct {
@@ -89,7 +89,7 @@ func NewTopicMgr(etcdCli *clientv3.Client, disc discovery.Discovery, consumeFunc
 		mgr.opTopicsMu.RLock()
 		if topic, ok := mgr.topics[cfg.Name]; ok {
 			mgr.opTopicsMu.RUnlock()
-			if topic.cfg.version > cfg.version {
+			if topic.cfg.etcdModVersion > cfg.etcdModVersion {
 				opTopicMu.RUnlock()
 				continue
 			}
@@ -135,10 +135,10 @@ func (m *TopicMgr) onTopicCfgUpdated(cfg *TopicCfg) error {
 	m.opTopicsMu.Lock()
 	if topic, ok = m.topics[cfg.Name]; ok {
 		m.opTopicsMu.RUnlock()
-		if cfg.version <= topic.cfg.version {
+		if cfg.etcdModVersion <= topic.cfg.etcdModVersion {
 			return nil
 		}
-		topic.cfg.version = cfg.version
+		topic.cfg.etcdModVersion = cfg.etcdModVersion
 	} else {
 		m.opTopicsMu.RUnlock()
 		if topic, err = m.newTopic(cfg); err != nil {
@@ -165,7 +165,7 @@ func (m *TopicMgr) onTopicCfgDel(cfg *TopicCfg) error {
 		return nil
 	}
 
-	if topic.cfg.version > cfg.version {
+	if topic.cfg.etcdModVersion > cfg.etcdModVersion {
 		m.opTopicsMu.RUnlock()
 		return nil
 	}
@@ -195,7 +195,7 @@ func (m *TopicMgr) onSubscriberCfgDel(cfg *SubscriberCfg) error {
 
 	m.opTopicsMu.RUnlock()
 
-	if origCfg, ok := topic.SubscriberCfgs[cfg.Name]; ok && origCfg.version > cfg.version {
+	if origCfg, ok := topic.SubscriberCfgs[cfg.Name]; ok && origCfg.etcdModVersion > cfg.etcdModVersion {
 		return nil
 	}
 
@@ -224,7 +224,7 @@ func (m *TopicMgr) onSubscriberCfgUpdated(cfg *SubscriberCfg) error {
 
 	m.opTopicsMu.RUnlock()
 
-	if origCfg, ok := topic.SubscriberCfgs[cfg.Name]; ok && origCfg.version >= cfg.version {
+	if origCfg, ok := topic.SubscriberCfgs[cfg.Name]; ok && origCfg.etcdModVersion >= cfg.etcdModVersion {
 		return nil
 	}
 
@@ -456,7 +456,7 @@ func (m *TopicMgr) RegSubscriber(cfg *SubscriberCfg) error {
 	}
 
 	if needUpdate {
-		_, err = m.atomicPersistSubscriber(origCfg.version, cfg)
+		_, err = m.atomicPersistSubscriber(origCfg.etcdModVersion, cfg)
 		if err != nil {
 			return err
 		}
@@ -496,7 +496,7 @@ func (m *TopicMgr) RegTopic(cfg *TopicCfg) error {
 	opTopicMu.Lock()
 	defer opTopicMu.Unlock()
 
-	succ, err := m.atomicPersistTopic(cfg.version, cfg)
+	succ, err := m.atomicPersistTopicToEtcd(cfg.etcdModVersion, cfg)
 	if err != nil {
 		return err
 	}
@@ -509,7 +509,7 @@ func (m *TopicMgr) RegTopic(cfg *TopicCfg) error {
 	defer m.opTopicsMu.Unlock()
 
 	if topic, ok := m.topics[cfg.Name]; ok {
-		if topic.cfg.version >= cfg.version {
+		if topic.cfg.etcdModVersion >= cfg.etcdModVersion {
 			return nil
 		}
 		topic.cfg = cfg
@@ -542,7 +542,7 @@ func (m *TopicMgr) UnRegTopic(cfg *TopicCfg) error {
 	opTopicMu.Lock()
 	defer opTopicMu.Unlock()
 
-	succ, err := m.atomicDelTopic(origCfg.version, cfg)
+	succ, err := m.atomicDelTopicToEtcd(origCfg.etcdModVersion, cfg)
 	if err != nil {
 		return err
 	}
@@ -637,7 +637,7 @@ func (m *TopicMgr) listTopicCfgsFromEtcd() ([]*TopicCfg, error) {
 			return nil, err
 		}
 
-		cfg.version = kv.Version
+		cfg.etcdModVersion = kv.Version
 
 		cfgs = append(cfgs, &cfg)
 	}
@@ -661,7 +661,7 @@ func (m *TopicMgr) listSubscriberCfgsFromEtcd(topic string) ([]*SubscriberCfg, e
 			return nil, err
 		}
 
-		cfg.version = kv.Version
+		cfg.etcdModVersion = kv.Version
 
 		cfgs = append(cfgs, &cfg)
 	}
@@ -685,7 +685,7 @@ func (m *TopicMgr) querySubscriberCfgFromEtcd(topic, subscriber string) (*Subscr
 		return nil, false, err
 	}
 
-	cfg.version = getResp.Kvs[0].Version
+	cfg.etcdModVersion = getResp.Kvs[0].ModRevision
 
 	return &cfg, true, nil
 }
@@ -706,7 +706,7 @@ func (m *TopicMgr) queryTopicCfgFromEtcd(topic string) (*TopicCfg, bool, error) 
 		return nil, false, err
 	}
 
-	cfg.version = getResp.Kvs[0].ModRevision
+	cfg.etcdModVersion = getResp.Kvs[0].ModRevision
 
 	return &cfg, true, nil
 }
@@ -731,7 +731,7 @@ func (m *TopicMgr) topicToEtcdKey(topic string) string {
 	return m.getTopicEtcdKeyPrefix() + topic
 }
 
-func (m *TopicMgr) atomicDelTopic(version int64, cfg *TopicCfg) (bool, error) {
+func (m *TopicMgr) atomicDelTopicToEtcd(version int64, cfg *TopicCfg) (bool, error) {
 	key := m.topicToEtcdKey(cfg.Name)
 	resp, err := m.etcdCli.
 		Txn(context.Background()).
@@ -743,13 +743,13 @@ func (m *TopicMgr) atomicDelTopic(version int64, cfg *TopicCfg) (bool, error) {
 	}
 
 	if resp.Succeeded {
-		cfg.version = resp.Responses[1].GetResponseRange().Kvs[0].ModRevision
+		cfg.etcdModVersion = resp.Responses[1].GetResponseRange().Kvs[0].ModRevision
 	}
 
 	return resp.Succeeded, nil
 }
 
-func (m *TopicMgr) atomicPersistTopic(version int64, cfg *TopicCfg) (bool, error) {
+func (m *TopicMgr) atomicPersistTopicToEtcd(version int64, cfg *TopicCfg) (bool, error) {
 	cfgJ, err := json.Marshal(cfg)
 	if err != nil {
 		return false, err
@@ -766,7 +766,7 @@ func (m *TopicMgr) atomicPersistTopic(version int64, cfg *TopicCfg) (bool, error
 	}
 
 	if resp.Succeeded {
-		cfg.version = resp.Responses[1].GetResponseRange().Kvs[0].ModRevision
+		cfg.etcdModVersion = resp.Responses[1].GetResponseRange().Kvs[0].ModRevision
 	}
 
 	return resp.Succeeded, nil
@@ -789,7 +789,7 @@ func (m *TopicMgr) atomicPersistSubscriber(version int64, cfg *SubscriberCfg) (b
 	}
 
 	if resp.Succeeded {
-		cfg.version = resp.Responses[1].GetResponseRange().Kvs[0].ModRevision
+		cfg.etcdModVersion = resp.Responses[1].GetResponseRange().Kvs[0].ModRevision
 	}
 
 	return resp.Succeeded, nil

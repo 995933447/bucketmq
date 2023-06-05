@@ -4,7 +4,6 @@ import (
 	"encoding/binary"
 	"fmt"
 	"github.com/995933447/bucketmq/internal/util"
-	"github.com/995933447/bucketmq/pkg/rpc/ha"
 	"os"
 	"strconv"
 	"strings"
@@ -32,21 +31,29 @@ func newOutput(writer *Writer) (*output, error) {
 	out := &output{
 		Writer: writer,
 	}
+
 	var err error
 	out.msgIdGen, err = newMsgIdGen(out.Writer.baseDir)
 	if err != nil {
 		return nil, err
 	}
+
+	out.finishRc, err = newConsumeWaterMarkRec(out.Writer.baseDir)
+	if err != nil {
+		return nil, err
+	}
+
 	return out, nil
 }
 
 type output struct {
 	*Writer
-	nOSeq       uint64
-	dateTimeSeq string
-	idxFp       *os.File
-	dataFp      *os.File
 	*msgIdGen
+	finishRc         *ConsumeWaterMarkRec
+	nOSeq            uint64
+	dateTimeSeq      string
+	idxFp            *os.File
+	dataFp           *os.File
 	writtenIdxNum    uint32
 	writtenDataBytes uint32
 	openFileTime     time.Time
@@ -104,7 +111,7 @@ func (o *output) syncDisk() {
 	}
 }
 
-func (o *output) write(msgList []*ha.SyncMsgFileLogItem) error {
+func (o *output) write(msgList []*Msg) error {
 	if len(msgList) == 0 {
 		return nil
 	}
@@ -112,22 +119,21 @@ func (o *output) write(msgList []*ha.SyncMsgFileLogItem) error {
 	bin := binary.LittleEndian
 	for {
 		accumIdxNum := o.writtenIdxNum
-		oldAccumIdxNum := o.writtenIdxNum
 		accumDataBytes := o.writtenDataBytes
 		firstMsg := msgList[0]
-		firstMsgHour := time.Unix(int64(firstMsg.CreatedAt), 0).Hour()
+		firstMsgHour := time.Unix(int64(firstMsg.logItem.CreatedAt), 0).Hour()
 		firstMsgNOSeq := o.curMaxMsgId + 1
 		for _, msg := range msgList {
-			if time.Unix(int64(msgList[0].CreatedAt), 0).Hour() != firstMsgHour {
+			if time.Unix(int64(firstMsg.logItem.CreatedAt), 0).Hour() != firstMsgHour {
 				break
 			}
-			incrementBytes := uint32(len(msg.FileBuf))
+			incrementBytes := uint32(len(msg.logItem.FileBuf))
 			incrementBytes += bufBoundariesBytes
 			accumIdxNum++
 			accumDataBytes += incrementBytes
 		}
 
-		batchWriteIdxNum := accumIdxNum - oldAccumIdxNum
+		batchWriteIdxNum := accumIdxNum - o.writtenIdxNum
 
 		idxBufBytes := batchWriteIdxNum * idxBytes
 		if uint32(len(o.idxBuf)) < idxBufBytes {
@@ -144,17 +150,17 @@ func (o *output) write(msgList []*ha.SyncMsgFileLogItem) error {
 		dataBufOffset := o.writtenDataBytes
 		for i := uint32(0); i < batchWriteIdxNum; i++ {
 			msg := msgList[i]
-			bufBytes := len(msg.FileBuf)
+			bufBytes := len(msg.logItem.FileBuf)
 
 			bin.PutUint16(dataBuf[:bufBoundaryBytes], bufBoundaryBegin)
-			copy(dataBuf[bufBoundaryBytes:], msg.FileBuf)
+			copy(dataBuf[bufBoundaryBytes:], msg.logItem.FileBuf)
 			bin.PutUint16(dataBuf[bufBoundaryBytes+bufBytes:], bufBoundaryEnd)
 			dataItemBufBytes := bufBytes + bufBoundariesBytes
 			dataBuf = dataBuf[dataItemBufBytes:]
 
 			bin.PutUint16(idxBuf[:bufBoundaryBytes], bufBoundaryBegin)
 			idxBuf = idxBuf[bufBoundaryBytes:]
-			bin.PutUint32(idxBuf[0:4], msg.CreatedAt)             // created at
+			bin.PutUint32(idxBuf[0:4], msg.logItem.CreatedAt)     // created at
 			bin.PutUint32(idxBuf[4:8], dataBufOffset)             // offset
 			bin.PutUint32(idxBuf[8:12], uint32(dataItemBufBytes)) // size
 			bin.PutUint64(idxBuf[12:20], o.curMaxMsgId+uint64(i+1))
@@ -164,7 +170,7 @@ func (o *output) write(msgList []*ha.SyncMsgFileLogItem) error {
 			dataBufOffset += uint32(dataItemBufBytes)
 		}
 
-		dateTimeSeq := time.Unix(int64(firstMsg.CreatedAt), 0).Format("2006010215")
+		dateTimeSeq := time.Unix(int64(firstMsg.logItem.CreatedAt), 0).Format("2006010215")
 		if o.dateTimeSeq != dateTimeSeq {
 			o.idxFp = nil
 			o.dataFp = nil
@@ -251,8 +257,23 @@ func (o *output) write(msgList []*ha.SyncMsgFileLogItem) error {
 			n += more
 		}
 
-		if err := o.msgIdGen.Incr(uint64(batchWriteIdxNum)); err != nil {
+		if err = o.msgIdGen.Incr(uint64(batchWriteIdxNum)); err != nil {
 			return err
+		}
+
+		if !firstMsg.logItem.IsSyncFromMaster {
+			if o.Writer.isRealTimeBackupMasterLogMeta {
+				if err = o.Writer.BackupMasterLogMeta(); err != nil {
+					return err
+				}
+			}
+		} else if err = o.finishRc.updateWaterMark(o.nOSeq, o.dateTimeSeq, o.msgIdGen.curMaxMsgId); err != nil {
+			return err
+		}
+
+		for _, msg := range msgList {
+			msg.isFinished = true
+			msg.resWait.Done()
 		}
 
 		msgList = msgList[batchWriteIdxNum:]
