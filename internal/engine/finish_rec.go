@@ -59,6 +59,26 @@ func newFinishRec(r *reader) (*finishRec, error) {
 		return nil, err
 	}
 
+	undoFileInfo, err := rec.undoFp.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if undoFileInfo.Size() > 0 {
+		n, err := rec.undoFp.ReadAt(rec.undoBuf[:], 0)
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
+
+		if n != idxUndoBytes {
+			return nil, errFileCorrupted
+		}
+
+		if err = rec.undo(); err != nil {
+			return nil, err
+		}
+	}
+
 	return rec, nil
 }
 
@@ -134,38 +154,8 @@ func (r *finishRec) load() error {
 func (r *finishRec) confirm(confirmedList []*confirmedMsgIdx) error {
 	now := time.Now().Unix()
 
-	origFinishedNum := len(r.msgIdxes)
-	binary.LittleEndian.PutUint16(r.undoBuf[:bufBoundaryBytes], bufBoundaryBegin)
-	binary.LittleEndian.PutUint32(r.undoBuf[bufBoundaryBytes:bufBoundaryBytes+idxOffsetInFinishIdxBufBytes], uint32(origFinishedNum))
-	binary.LittleEndian.PutUint16(r.undoBuf[finishIdxBufBytes-bufBoundaryBytes:], bufBoundaryEnd)
-	var total int
-	for {
-		n, err := r.undoFp.WriteAt(r.undoBuf[:total], int64(total))
-		if err != nil {
-			return err
-		}
-
-		total += n
-
-		if total >= idxUndoBytes {
-			break
-		}
-	}
-
-	undo := func() error {
-		origFileBytes := int64(origFinishedNum * finishIdxBufBytes)
-		if err := r.fp.Truncate(origFileBytes); err != nil {
-			if err = os.Truncate(r.fp.Name(), origFileBytes); err != nil {
-				return err
-			}
-			return err
-		}
-
-		if err := r.clearUndo(); err != nil {
-			return err
-		}
-
-		return nil
+	if err := r.logUndo(); err != nil {
+		return err
 	}
 
 	needBufLen := len(confirmedList) * finishIdxBufBytes
@@ -183,8 +173,8 @@ func (r *finishRec) confirm(confirmedList []*confirmedMsgIdx) error {
 	}
 	_, err := r.fp.Write(r.buf[:])
 	if err != nil {
-		if err = undo(); err != nil {
-			return err
+		if err := r.undo(); err != nil {
+			panic(err)
 		}
 		return err
 	}
@@ -195,18 +185,55 @@ func (r *finishRec) confirm(confirmedList []*confirmedMsgIdx) error {
 		ContentCreatedAt: uint32(now),
 	})
 	if err != nil {
-		if err = undo(); err != nil {
-			return err
+		if err := r.undo(); err != nil {
+			panic(err)
 		}
 		return err
 	}
 
 	if err = r.clearUndo(); err != nil {
-		return err
+		panic(err)
 	}
 
 	for _, confirmed := range confirmedList {
 		r.msgIdxes[confirmed.idxOffset] = struct{}{}
+	}
+
+	return nil
+}
+
+func (r *finishRec) undo() error {
+	origFileBytes := int64(binary.LittleEndian.Uint32(r.undoBuf[bufBoundaryBytes:bufBoundaryBytes+idxOffsetInFinishIdxBufBytes]) * finishIdxBufBytes)
+	if err := r.fp.Truncate(origFileBytes); err != nil {
+		if err = os.Truncate(r.fp.Name(), origFileBytes); err != nil {
+			return err
+		}
+		return err
+	}
+
+	if err := r.clearUndo(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *finishRec) logUndo() error {
+	binary.LittleEndian.PutUint16(r.undoBuf[:bufBoundaryBytes], bufBoundaryBegin)
+	binary.LittleEndian.PutUint32(r.undoBuf[bufBoundaryBytes:bufBoundaryBytes+idxOffsetInFinishIdxBufBytes], uint32(len(r.msgIdxes)))
+	binary.LittleEndian.PutUint16(r.undoBuf[finishIdxBufBytes-bufBoundaryBytes:], bufBoundaryEnd)
+	var total int
+	for {
+		n, err := r.undoFp.WriteAt(r.undoBuf[:total], int64(total))
+		if err != nil {
+			return err
+		}
+
+		total += n
+
+		if total >= idxUndoBytes {
+			break
+		}
 	}
 
 	return nil
