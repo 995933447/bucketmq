@@ -9,7 +9,7 @@ import (
 
 const (
 	MsgIdFileSuffix     = ".mid"
-	MsgIdUndoFileSuffix = ".mid_wal"
+	MsgIdUndoFileSuffix = ".mid_undo."
 )
 
 const msgIdGenBytes = 12
@@ -101,7 +101,7 @@ func (g *msgIdGen) Incr(incr uint64) error {
 		}
 	}
 
-	err := OnOutputFile(g.fp.Name(), g.buf[:], 0, &OutputExtra{
+	err := LogMsgFileOp(g.fp.Name(), g.buf[:], 0, &OutputExtra{
 		Topic:            g.topic,
 		ContentCreatedAt: uint32(now),
 	})

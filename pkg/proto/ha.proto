@@ -36,11 +36,13 @@ message SyncMsgFileLogItem {
     uint32 file_offset = 7;
     uint64 log_id = 8;
     bool is_sync_from_master = 9;
+    uint64 term = 10;
 }
 
 message SyncRemoteReplicaReq {
     repeated SyncMsgFileLogItem log_items = 1;
     uint64 last_synced_log_id = 2;
+    uint64 term_of_last_synced_log = 3;
 }
 
 message SyncRemoteReplicaResp {
@@ -48,6 +50,7 @@ message SyncRemoteReplicaResp {
 
 message PullRemoteReplicaReq {
     uint64 last_synced_log_id = 2;
+    uint64 term_of_last_synced_log = 3;
 }
 
 message PullRemoteReplicaResp {

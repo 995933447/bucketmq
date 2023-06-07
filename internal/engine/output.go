@@ -303,7 +303,7 @@ func (o *output) write(msgList []*Msg) error {
 			return err
 		}
 
-		err = OnOutputFile(o.dataFp.Name(), o.dataBuf[:dataBufBytes], o.writtenDataBytes, &OutputExtra{
+		err = LogMsgFileOp(o.dataFp.Name(), o.dataBuf[:dataBufBytes], o.writtenDataBytes, &OutputExtra{
 			Topic:            o.Writer.topic,
 			ContentCreatedAt: uint32(now.Unix()),
 		})
@@ -333,7 +333,7 @@ func (o *output) write(msgList []*Msg) error {
 			return err
 		}
 
-		err = OnOutputFile(o.idxFp.Name(), o.idxBuf[:idxBufBytes], o.writtenIdxNum*idxBytes, &OutputExtra{
+		err = LogMsgFileOp(o.idxFp.Name(), o.idxBuf[:idxBufBytes], o.writtenIdxNum*idxBytes, &OutputExtra{
 			Topic:            o.Writer.topic,
 			ContentCreatedAt: uint32(now.Unix()),
 		})

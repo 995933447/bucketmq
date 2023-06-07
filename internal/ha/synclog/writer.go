@@ -45,8 +45,14 @@ func (w *Writer) loop() {
 			if !nodegrpha.IsMasterRole() {
 				return
 			}
-			if err := w.BackupMasterLogMeta(); err != nil {
+
+			ok, err := w.BackupMasterLogMeta()
+			if err != nil {
 				util.Logger.Error(nil, err)
+			}
+
+			if !ok {
+				util.Logger.Error(nil, nodegrpha.ErrLostMaster)
 			}
 		case <-syncDiskTk.C:
 			if w.output != nil {

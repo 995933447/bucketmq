@@ -97,7 +97,7 @@ func (b *bootMarker) mark(bootId uint32, seq uint64, idxOffset uint32) error {
 		}
 	}
 
-	err := OnOutputFile(b.fp.Name(), buf, 0, &OutputExtra{
+	err := LogMsgFileOp(b.fp.Name(), buf, 0, &OutputExtra{
 		Topic:            b.Subscriber.topic,
 		Subscriber:       b.Subscriber.name,
 		ContentCreatedAt: uint32(now),

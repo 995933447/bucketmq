@@ -9,6 +9,7 @@ import (
 	"github.com/995933447/bucketmq/pkg/rpc/ha"
 	"github.com/995933447/microgosuit/discovery"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"time"
 )
 
 type Sync struct {
@@ -19,39 +20,47 @@ type Sync struct {
 	baseDir string
 }
 
-func (s *Sync) BackupMasterLogMeta() error {
+func (s *Sync) BackupMasterLogMeta() (bool, error) {
 	meta, err := nodegrpha.GetNodeGrpHAMeta(s.etcdCli)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	meta.MaxSyncLogId = s.Writer.output.msgIdGen.curMaxMsgId
 	meta.TermOfMaxSyncLog = nodegrpha.GetCurElectTerm()
 
-	_, err = nodegrpha.SaveNodeGrpHAMetaByMasterRole(s.etcdCli, meta)
+	succ, err := nodegrpha.SaveNodeGrpHAMetaByMasterRole(s.etcdCli, meta)
 	if err != nil {
-		return err
+		return false, err
 	}
+
+	if !succ {
+		return false, nil
+	}
+
+	nodegrpha.MaxSyncedLogId = meta.MaxSyncLogId
+	nodegrpha.TermOfMaxSyncedLog = meta.TermOfMaxSyncLog
+	nodegrpha.LastSyncedLogAt = uint32(time.Now().Unix())
 
 	unlock, err := util.DistributeLockNodeGrpForUpdateDiscovery(s.etcdCli)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	defer unlock()
 
-	node, ok, err := util.DiscoverMyNode(s.Discovery)
+	node, exist, err := util.DiscoverMyNode(s.Discovery)
 	if err != nil {
-		return err
+		return false, err
 	}
 
-	if !ok {
-		return nil
+	if !exist {
+		return false, nil
 	}
 
 	var nodeDesc ha.Node
 	if err = json.Unmarshal([]byte(node.Extra), &nodeDesc); err != nil {
-		return err
+		return false, err
 	}
 
 	nodeDesc.MaxSyncedLogId = meta.MaxSyncLogId
@@ -59,28 +68,24 @@ func (s *Sync) BackupMasterLogMeta() error {
 
 	nodeDescJ, err := json.Marshal(nodeDesc)
 	if err != nil {
-		return err
+		return false, err
 	}
 
 	node.Extra = string(nodeDescJ)
 	if err = s.Discovery.Register(context.Background(), discover.SrvNameBroker, node); err != nil {
-		return err
+		return false, err
 	}
 
-	return nil
+	return true, nil
 }
 
-func NewSync(baseDir string) (*Sync, error) {
+func NewSync(baseDir string, etcdCli *clientv3.Client) (*Sync, error) {
 	sync := &Sync{
 		baseDir: baseDir,
+		etcdCli: etcdCli,
 	}
 
 	var err error
-	sync.etcdCli, err = util.GetOrNewEtcdCli()
-	if err != nil {
-		return nil, err
-	}
-
 	sync.Writer, err = NewWriter(sync)
 	if err != nil {
 		return nil, err

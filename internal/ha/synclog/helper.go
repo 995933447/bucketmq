@@ -78,7 +78,7 @@ func ParseFileNOSeqStr(file os.DirEntry) (string, bool) {
 }
 
 func MakeSeqIdxFp(baseDir, dateTimeSeq string, nOSeq uint64, flag int) (*os.File, error) {
-	idxFp, err := os.OpenFile(genIdxFileName(baseDir, dateTimeSeq, nOSeq), os.O_CREATE|os.O_RDONLY, os.ModePerm)
+	idxFp, err := os.OpenFile(genIdxFileName(baseDir, dateTimeSeq, nOSeq), flag, os.ModePerm)
 	if err != nil {
 		return nil, err
 	}
@@ -86,7 +86,7 @@ func MakeSeqIdxFp(baseDir, dateTimeSeq string, nOSeq uint64, flag int) (*os.File
 }
 
 func MakeSeqDataFp(baseDir, dateTimeSeq string, nOSeq uint64, flag int) (*os.File, error) {
-	idxFp, err := os.OpenFile(genDataFileName(baseDir, dateTimeSeq, nOSeq), os.O_CREATE|os.O_RDONLY, os.ModePerm)
+	idxFp, err := os.OpenFile(genDataFileName(baseDir, dateTimeSeq, nOSeq), flag, os.ModePerm)
 	if err != nil {
 		return nil, err
 	}
@@ -200,9 +200,9 @@ func makePendingRcFps(baseDir string) (*os.File, *os.File, error) {
 	return pendingFp, unPendFp, nil
 }
 
-func ReadLogItem(idxFp, dataFp *os.File, idxOffset uint64) (*ha.SyncMsgFileLogItem, bool, error) {
-	idxBuf := make([]byte, idxBytes)
-	seekIdxBufOffset := idxOffset * idxBytes
+func ReadLogItem(idxFp, dataFp *os.File, idxOffset uint32) (*ha.SyncMsgFileLogItem, bool, error) {
+	idxBuf := make([]byte, IdxBytes)
+	seekIdxBufOffset := idxOffset * IdxBytes
 	hasMore := true
 	_, err := idxFp.ReadAt(idxBuf, int64(seekIdxBufOffset))
 	if err != nil {
@@ -217,7 +217,7 @@ func ReadLogItem(idxFp, dataFp *os.File, idxOffset uint64) (*ha.SyncMsgFileLogIt
 	}
 
 	boundaryBegin := binary.LittleEndian.Uint16(idxBuf[:bufBoundaryBytes])
-	boundaryEnd := binary.LittleEndian.Uint16(idxBuf[idxBytes-bufBoundaryBytes:])
+	boundaryEnd := binary.LittleEndian.Uint16(idxBuf[IdxBytes-bufBoundaryBytes:])
 	if boundaryBegin != bufBoundaryBegin || boundaryEnd != bufBoundaryEnd {
 		return nil, false, errFileCorrupted
 	}
@@ -225,6 +225,7 @@ func ReadLogItem(idxFp, dataFp *os.File, idxOffset uint64) (*ha.SyncMsgFileLogIt
 	offset := binary.LittleEndian.Uint32(idxBuf[bufBoundaryBytes+4 : bufBoundaryBytes+8])
 	dataBytes := binary.LittleEndian.Uint32(idxBuf[bufBoundaryBytes+8 : bufBoundaryBytes+12])
 	msgId := binary.LittleEndian.Uint64(idxBuf[bufBoundaryBytes+12 : bufBoundaryBytes+20])
+	term := binary.LittleEndian.Uint64(idxBuf[bufBoundaryBytes+20 : bufBoundaryBytes+28])
 
 	dataBuf := make([]byte, dataBytes)
 	_, err = dataFp.ReadAt(dataBuf, int64(offset))
@@ -254,6 +255,7 @@ func ReadLogItem(idxFp, dataFp *os.File, idxOffset uint64) (*ha.SyncMsgFileLogIt
 	}
 
 	item.LogId = msgId
+	item.Term = term
 
 	return &item, hasMore, nil
 }
@@ -403,4 +405,83 @@ func scanDirToParseNextSeq(baseDir string, nOSeq uint64) (uint64, string, error)
 	}
 
 	return nextNOSeq, nextDateTimeSeq, nil
+}
+
+func openOrCreateDateTimeFps(baseDir, dateTimeSeq string, nOSeqIfCreate uint64) (*os.File, *os.File, uint64, error) {
+	idxFp, dataFp, nOSeq, err := openDateTimeSeqFps(baseDir, dateTimeSeq)
+	if err != nil && err != errSeqNotFound {
+		return nil, nil, 0, err
+	} else if err == nil {
+		return idxFp, dataFp, nOSeq, nil
+	}
+
+	dir := GetHADataDir(baseDir)
+
+	idxFp, err = os.OpenFile(dir+"/"+fmt.Sprintf("%s_%d.%s", dateTimeSeq, nOSeqIfCreate, IdxFileSuffix), os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	dataFp, err = os.OpenFile(dir+"/"+fmt.Sprintf("%s_%d.%s", dateTimeSeq, nOSeqIfCreate, DataFileSuffix), os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	return idxFp, dataFp, nOSeqIfCreate, nil
+}
+
+func openDateTimeSeqFps(baseDir, dateTimeSeq string) (*os.File, *os.File, uint64, error) {
+	dir := GetHADataDir(baseDir)
+	if err := mkdirIfNotExist(dir); err != nil {
+		return nil, nil, 0, err
+	}
+
+	files, err := os.ReadDir(dir)
+	if err != nil {
+		return nil, nil, 0, err
+	}
+
+	var (
+		idxFp  *os.File
+		dataFp *os.File
+		nOSeq  uint64
+	)
+	for _, file := range files {
+		if !strings.HasSuffix(file.Name(), IdxFileSuffix) {
+			continue
+		}
+
+		if !strings.Contains(file.Name(), dateTimeSeq) {
+			continue
+		}
+
+		nOSeqStr, ok := ParseFileNOSeqStr(file)
+		if !ok {
+			continue
+		}
+
+		if nOSeqStr != "" {
+			var err error
+			nOSeq, err = strconv.ParseUint(nOSeqStr, 10, 64)
+			if err != nil {
+				return nil, nil, 0, err
+			}
+		}
+
+		idxFp, err = os.OpenFile(dir+"/"+file.Name(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+
+		dataFp, err = os.OpenFile(dir+"/"+strings.ReplaceAll(file.Name(), IdxFileSuffix, DataFileSuffix), os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
+		if err != nil {
+			return nil, nil, 0, err
+		}
+	}
+
+	if idxFp == nil || dataFp == nil {
+		return nil, nil, 0, errSeqNotFound
+	}
+
+	return idxFp, dataFp, nOSeq, nil
 }

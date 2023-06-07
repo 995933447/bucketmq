@@ -7,10 +7,10 @@ import (
 	"github.com/995933447/bucketmq/internal/engine"
 	"github.com/995933447/bucketmq/internal/ha/synclog"
 	"github.com/995933447/bucketmq/internal/mgr"
-	"github.com/995933447/bucketmq/internal/server/grpc/handler"
 	"github.com/995933447/bucketmq/internal/server/grpc/middleware"
+	"github.com/995933447/bucketmq/internal/server/grpc/service"
 	"github.com/995933447/bucketmq/internal/server/snrpc"
-	snrpchandler "github.com/995933447/bucketmq/internal/server/snrpc/handler"
+	snrpchandler "github.com/995933447/bucketmq/internal/server/snrpc/service"
 	"github.com/995933447/bucketmq/internal/syscfg"
 	"github.com/995933447/bucketmq/internal/util"
 	"github.com/995933447/bucketmq/pkg/discover"
@@ -60,7 +60,11 @@ func main() {
 		panic(err)
 	}
 
-	if err = initHALogSync(); err != nil {
+	hALogSync, err := synclog.NewSync(syscfg.MustCfg().DataDir, etcdCli)
+	if err != nil {
+		panic(err)
+	}
+	if err = initHALogSync(hALogSync); err != nil {
 		panic(err)
 	}
 
@@ -74,9 +78,10 @@ func main() {
 		panic(err)
 	}
 
-	go func() {
-		topicMgr.Start()
-	}()
+	haService, err := service.NewHA(etcdCli, disc)
+	if err != nil {
+		panic(err)
+	}
 
 	err = microgosuit.ServeGrpc(context.Background(), &microgosuit.ServeGrpcReq{
 		SrvName:              discover.SrvNameBroker,
@@ -84,7 +89,8 @@ func main() {
 		IpVar:                sysCfg.Host,
 		Port:                 sysCfg.Port2,
 		RegisterCustomServiceServerFunc: func(server *grpc.Server) error {
-			broker.RegisterBrokerServer(server, handler.NewBroker(topicMgr))
+			ha.RegisterHAServer(server, haService)
+			broker.RegisterBrokerServer(server, service.NewBroker(topicMgr))
 			return nil
 		},
 		BeforeRegDiscover: func(_ discovery.Discovery, node *discovery.Node) error {
@@ -97,6 +103,14 @@ func main() {
 
 			return nil
 		},
+		AfterRegDiscover: func(d discovery.Discovery, node *discovery.Node) error {
+			go func() {
+				if err = mgr.NewHA(etcdCli, disc, hALogSync, topicMgr, haService).Elect(); err != nil {
+					panic(err)
+				}
+			}()
+			return nil
+		},
 		SrvOpts: []grpc.ServerOption{
 			grpc.ChainUnaryInterceptor(middleware.Recover(), middleware.AutoValidate()),
 		},
@@ -106,13 +120,8 @@ func main() {
 	}
 }
 
-func initHALogSync() error {
-	hALogSync, err := synclog.NewSync(syscfg.MustCfg().DataDir)
-	if err != nil {
-		return err
-	}
-
-	engine.OnOutputFile = func(fileName string, buf []byte, fileOffset uint32, extra *engine.OutputExtra) error {
+func initHALogSync(hALogSync *synclog.Sync) error {
+	engine.LogMsgFileOp = func(fileName string, buf []byte, fileOffset uint32, extra *engine.OutputExtra) error {
 		var syncMsgLogItem *ha.SyncMsgFileLogItem
 
 		if extra.Topic == "" && extra.Subscriber == "" {

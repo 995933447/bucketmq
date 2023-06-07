@@ -3,11 +3,19 @@ package ha
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"github.com/995933447/bucketmq/internal/syscfg"
 	"github.com/995933447/bucketmq/internal/util"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"sync/atomic"
+)
+
+var ErrLostMaster = errors.New("current node lost master role")
+
+var (
+	MaxSyncedLogId     uint64
+	TermOfMaxSyncedLog uint64
+	LastSyncedLogAt    uint32
 )
 
 const (
@@ -115,10 +123,4 @@ func RefreshIsMasterRole(etcdCli *clientv3.Client) (bool, error) {
 	}
 
 	return getResp.Kvs[0].CreateRevision == NodeGrpMasterElectEtcdKeyCreateVersion, nil
-}
-
-const MaxSyncLogIdEtcdKeyPrefix = ""
-
-func GetMaxSyncLogIdEtcdKey() string {
-	return fmt.Sprintf(MaxSyncLogIdEtcdKeyPrefix + "cluster_" + syscfg.MustCfg().Cluster + "_sync_log_msg_id")
 }

@@ -9,7 +9,7 @@ import (
 
 const (
 	FinishFileSuffix     = ".fin"
-	FinishUndoFileSuffix = ".fin_wal"
+	FinishUndoFileSuffix = ".fin_undo."
 )
 
 // finish record format is:
@@ -179,7 +179,7 @@ func (r *finishRec) confirm(confirmedList []*confirmedMsgIdx) error {
 		return err
 	}
 
-	err = OnOutputFile(r.fp.Name(), buf, uint32(len(r.msgIdxes)*finishIdxBufBytes), &OutputExtra{
+	err = LogMsgFileOp(r.fp.Name(), buf, uint32(len(r.msgIdxes)*finishIdxBufBytes), &OutputExtra{
 		Topic:            r.Subscriber.topic,
 		Subscriber:       r.Subscriber.name,
 		ContentCreatedAt: uint32(now),

@@ -68,10 +68,10 @@ type Consumer struct {
 	status            runState
 	idxFp             *os.File
 	dataFp            *os.File
-	nextIdxCursor     uint64
+	nextIdxCursor     uint32
 	finishRec         *ConsumeWaterMarkRec
 	opFinishRecMu     sync.RWMutex
-	msgNum            uint64
+	msgNum            uint32
 	unsubscribeSignCh chan struct{}
 	confirmMsgCh      chan *confirmMsgReq
 }
@@ -177,7 +177,7 @@ func (c *Consumer) refreshMsgNum() error {
 	if err != nil {
 		return err
 	}
-	c.msgNum = uint64(idxFileState.Size()) / idxBytes
+	c.msgNum = uint32(idxFileState.Size()) / IdxBytes
 	return nil
 }
 
@@ -198,7 +198,7 @@ func (c *Consumer) SyncRemoteReplicas(logItems []*ha.SyncMsgFileLogItem) (bool, 
 			return false, err
 		}
 
-		if nodeDesc.MaxSyncedLogId < c.finishRec.nOSeq+c.finishRec.idxNum-1 {
+		if nodeDesc.MaxSyncedLogId < c.finishRec.nOSeq+uint64(c.finishRec.idxNum)-1 {
 			continue
 		}
 
@@ -219,7 +219,7 @@ func (c *Consumer) SyncRemoteReplicas(logItems []*ha.SyncMsgFileLogItem) (bool, 
 
 			_, err = ha.NewHAClient(conn).SyncRemoteReplica(ctx, &ha.SyncRemoteReplicaReq{
 				LogItems:        logItems,
-				LastSyncedLogId: c.finishRec.nOSeq + c.finishRec.idxNum - 1,
+				LastSyncedLogId: c.finishRec.nOSeq + uint64(c.finishRec.idxNum) - 1,
 			})
 			if err != nil {
 				util.Logger.Warn(context.Background(), err)
@@ -301,7 +301,7 @@ func (c *Consumer) consumeBatch() error {
 		break
 	}
 
-	err := c.updateFinishWaterMark(c.finishRec.nOSeq, c.finishRec.dateTimeSeq, c.finishRec.idxNum+uint64(len(items)))
+	err := c.updateFinishWaterMark(c.finishRec.nOSeq, c.finishRec.dateTimeSeq, c.finishRec.idxNum+uint32(len(items)))
 	if err != nil {
 		return err
 	}
@@ -326,7 +326,7 @@ func (c *Consumer) IsRunning() bool {
 	return c.status == runStateRunning
 }
 
-func (c *Consumer) updateFinishWaterMark(nOSeq uint64, dateTimeSeq string, idxOffset uint64) error {
+func (c *Consumer) updateFinishWaterMark(nOSeq uint64, dateTimeSeq string, idxOffset uint32) error {
 	c.opFinishRecMu.Lock()
 	defer c.opFinishRecMu.Unlock()
 

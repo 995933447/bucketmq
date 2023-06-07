@@ -1,4 +1,4 @@
-package handler
+package service
 
 import (
 	"github.com/995933447/bucketmq/internal/engine"
