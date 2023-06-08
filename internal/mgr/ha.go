@@ -60,40 +60,6 @@ func (h *HA) init() {
 				continue
 			}
 
-			//unlock, err := util.DistributeLockNodeGrpForUpdateDiscovery(h.etcdCli)
-			//if err != nil {
-			//	util.Logger.Error(nil, err)
-			//	continue
-			//}
-			//
-			//brokerCfg, err := h.Discovery.Discover(context.Background(), discover.SrvNameBroker)
-			//if err != nil {
-			//	unlock()
-			//	util.Logger.Error(nil, err)
-			//	continue
-			//}
-			//
-			//var masterNode *discovery.Node
-			//for _, node := range brokerCfg.Nodes {
-			//	var nodeDesc ha.Node
-			//	err = json.Unmarshal([]byte(node.Extra), &nodeDesc)
-			//	if err != nil {
-			//		unlock()
-			//		util.Logger.Error(nil, err)
-			//		continue
-			//	}
-			//
-			//	if nodeDesc.IsMaster {
-			//		break
-			//	}
-			//}
-			//
-			//unlock()
-			//
-			//if masterNode == nil {
-			//	continue
-			//}
-
 			materNode, err := nodegrpha.GetNodeGrpMasterDiscover(h.etcdCli)
 			if err != nil {
 				util.Logger.Error(nil, err)
