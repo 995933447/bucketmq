@@ -9,11 +9,11 @@ import (
 
 //  no seq  | data time seq |     index num
 //
-//	  8     |   10          |      8
+//	  8     |   10          |      4
 
 const (
 	finishRcSuffix                    = ".fin"
-	finishWaterMarkBytes              = 26
+	finishWaterMarkBytes              = 22
 	nOSeqInFinishWaterMarkBytes       = 8
 	dateTimeSeqInFinishWaterMarkBytes = 10
 	idxNumInFinishWaterMarkBytes      = 8
@@ -70,14 +70,16 @@ func newConsumeWaterMarkRec(baseDir string) (*ConsumeWaterMarkRec, error) {
 type FinishWaterMark struct {
 	nOSeq       uint64
 	dateTimeSeq string
-	idxNum      uint64
+	idxNum      uint32
 }
 
 type ConsumeWaterMarkRec struct {
 	baseDir string
 	fp      *os.File
+	undoFp  *os.File
 	idxFp   *os.File
 	buf     [finishWaterMarkBytes]byte
+	undoBuf [finishWaterMarkBytes]byte
 	FinishWaterMark
 }
 
@@ -96,10 +98,10 @@ func (r *ConsumeWaterMarkRec) isOffsetsFinishedInSeq() (bool, error) {
 		return false, err
 	}
 
-	return idxFileState.Size()/idxBytes == int64(r.idxNum), nil
+	return idxFileState.Size()/IdxBytes == int64(r.idxNum), nil
 }
 
-func (r *ConsumeWaterMarkRec) refreshAndGetOffset() (uint64, string, uint64, error) {
+func (r *ConsumeWaterMarkRec) refreshAndGetOffset() (uint64, string, uint32, error) {
 	n, err := r.fp.Read(r.buf[:])
 	if err != nil {
 		return 0, "", 0, err
@@ -121,12 +123,12 @@ func (r *ConsumeWaterMarkRec) refreshAndGetOffset() (uint64, string, uint64, err
 	bin := binary.LittleEndian
 	r.nOSeq = bin.Uint64(r.buf[:nOSeqInFinishWaterMarkBytes])
 	r.dateTimeSeq = string(r.buf[nOSeqInFinishWaterMarkBytes : nOSeqInFinishWaterMarkBytes+dateTimeSeqInFinishWaterMarkBytes])
-	r.idxNum = bin.Uint64(r.buf[nOSeqInFinishWaterMarkBytes+dateTimeSeqInFinishWaterMarkBytes:])
+	r.idxNum = bin.Uint32(r.buf[nOSeqInFinishWaterMarkBytes+dateTimeSeqInFinishWaterMarkBytes:])
 
 	return r.nOSeq, r.dateTimeSeq, r.idxNum, nil
 }
 
-func (r *ConsumeWaterMarkRec) getWaterMark() (uint64, string, uint64) {
+func (r *ConsumeWaterMarkRec) getWaterMark() (uint64, string, uint32) {
 	return r.nOSeq, r.dateTimeSeq, r.idxNum
 }
 
@@ -136,7 +138,7 @@ func (r *ConsumeWaterMarkRec) syncDisk() {
 	}
 }
 
-func (r *ConsumeWaterMarkRec) updateWaterMark(nOSeq uint64, dateTimeSeq string, idxNum uint64) error {
+func (r *ConsumeWaterMarkRec) updateWaterMark(nOSeq uint64, dateTimeSeq string, idxNum uint32) error {
 	var err error
 	if nOSeq != r.nOSeq {
 		r.idxFp, err = MakeSeqIdxFp(r.baseDir, dateTimeSeq, nOSeq, os.O_RDONLY)
@@ -149,33 +151,92 @@ func (r *ConsumeWaterMarkRec) updateWaterMark(nOSeq uint64, dateTimeSeq string, 
 			return err
 		}
 
-		maxIdxNum := uint64(idxFileState.Size() / idxBytes)
+		maxIdxNum := uint32(idxFileState.Size() / IdxBytes)
 		if maxIdxNum < idxNum {
 			idxNum = maxIdxNum
 		}
 	}
 
-	bin := binary.LittleEndian
-	bin.PutUint64(r.buf[:nOSeqInFinishWaterMarkBytes], nOSeq)
-	copy(r.buf[nOSeqInFinishWaterMarkBytes:nOSeqInFinishWaterMarkBytes+dateTimeSeqInFinishWaterMarkBytes], dateTimeSeq)
-	bin.PutUint64(r.buf[nOSeqInFinishWaterMarkBytes+dateTimeSeqInFinishWaterMarkBytes:], idxNum)
-	n, err := r.fp.WriteAt(r.buf[:], 0)
-	if err != nil {
+	if err := r.logUndo(); err != nil {
 		return err
 	}
 
+	bin := binary.LittleEndian
+	bin.PutUint64(r.buf[:nOSeqInFinishWaterMarkBytes], nOSeq)
+	copy(r.buf[nOSeqInFinishWaterMarkBytes:nOSeqInFinishWaterMarkBytes+dateTimeSeqInFinishWaterMarkBytes], dateTimeSeq)
+	bin.PutUint32(r.buf[nOSeqInFinishWaterMarkBytes+dateTimeSeqInFinishWaterMarkBytes:], idxNum)
+	var total int
 	for {
-		if n >= finishWaterMarkBytes {
-			break
-		}
-		more, err := r.fp.Write(r.buf[:])
+		n, err := r.fp.WriteAt(r.buf[:total], int64(total))
 		if err != nil {
+			if err := r.undo(); err != nil {
+				panic(err)
+			}
 			return err
 		}
-		n += more
+
+		total += n
+
+		if total >= finishWaterMarkBytes {
+			break
+		}
 	}
 
 	r.nOSeq, r.dateTimeSeq, r.idxNum = nOSeq, dateTimeSeq, idxNum
 
+	return nil
+}
+
+func (r *ConsumeWaterMarkRec) undo() error {
+	var total int
+	for {
+		n, err := r.fp.WriteAt(r.undoBuf[:total], int64(total))
+		if err != nil {
+			return err
+		}
+
+		total += n
+
+		if total >= idxUndoBytes {
+			break
+		}
+	}
+
+	if err := r.clearUndo(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (r *ConsumeWaterMarkRec) logUndo() error {
+	binary.LittleEndian.PutUint16(r.undoBuf[:bufBoundaryBytes], bufBoundaryBegin)
+	copy(r.undoBuf[bufBoundaryBytes:bufBoundaryBytes+dateTimeSeqInFinishWaterMarkBytes], r.dateTimeSeq)
+	binary.LittleEndian.PutUint64(r.undoBuf[bufBoundaryBytes+dateTimeSeqInFinishWaterMarkBytes:], r.nOSeq)
+	binary.LittleEndian.PutUint16(r.undoBuf[finishWaterMarkBytes-bufBoundaryBytes:], bufBoundaryEnd)
+	var total int
+	for {
+		n, err := r.undoFp.WriteAt(r.undoBuf[:total], int64(total))
+		if err != nil {
+			return err
+		}
+
+		total += n
+
+		if total >= idxUndoBytes {
+			break
+		}
+	}
+
+	return nil
+}
+
+func (r *ConsumeWaterMarkRec) clearUndo() error {
+	if err := r.undoFp.Truncate(0); err != nil {
+		if err = os.Truncate(r.undoFp.Name(), 0); err != nil {
+			return err
+		}
+		return err
+	}
 	return nil
 }

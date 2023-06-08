@@ -35,6 +35,6 @@ type OutputExtra struct {
 	ContentCreatedAt uint32
 }
 
-var OnOutputFile = func(fileName string, buf []byte, fileOffset uint32, extra *OutputExtra) error {
+var LogMsgFileOp = func(fileName string, buf []byte, fileOffset uint32, extra *OutputExtra) error {
 	return nil
 }

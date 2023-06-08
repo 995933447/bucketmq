@@ -4,6 +4,7 @@ import (
 	"encoding/binary"
 	"github.com/995933447/bucketmq/internal/util"
 	"github.com/golang/snappy"
+	"io"
 	"os"
 	"time"
 )
@@ -45,19 +46,64 @@ func newOutput(writer *Writer, seq uint64) (*output, error) {
 		Writer: writer,
 		seq:    seq,
 	}
+
 	var err error
+
 	out.msgIdGen, err = newMsgIdGen(out.Writer.baseDir, out.Writer.topic)
 	if err != nil {
 		return nil, err
 	}
+
 	out.idxUndoFp, err = makeIdxUndoFp(out.Writer.baseDir, out.Writer.topic)
 	if err != nil {
 		return nil, err
 	}
+
+	idxUndoFileInfo, err := out.idxUndoFp.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if idxUndoFileInfo.Size() > 0 {
+		n, err := out.idxUndoFp.ReadAt(out.idxUndoBuf[:], 0)
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
+
+		if n != idxUndoBytes {
+			return nil, errFileCorrupted
+		}
+
+		if err = out.undoIdx(); err != nil {
+			return nil, err
+		}
+	}
+
 	out.dataUndoFp, err = makeDataUndoFp(out.Writer.baseDir, out.Writer.topic)
 	if err != nil {
 		return nil, err
 	}
+
+	dataUndoFileInfo, err := out.dataUndoFp.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if dataUndoFileInfo.Size() > 0 {
+		n, err := out.dataUndoFp.ReadAt(out.dataUndoBuf[:], 0)
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
+
+		if n != dataUndoBytes {
+			return nil, errFileCorrupted
+		}
+
+		if err = out.undoData(); err != nil {
+			return nil, err
+		}
+	}
+
 	return out, nil
 }
 
@@ -257,25 +303,13 @@ func (o *output) write(msgList []*Msg) error {
 			return err
 		}
 
-		undoData := func() error {
-			if err = o.dataFp.Truncate(int64(o.writtenDataBytes)); err != nil {
-				if err = os.Truncate(o.dataFp.Name(), int64(o.writtenDataBytes)); err != nil {
-					return err
-				}
-			}
-			if err = o.clearDataUndo(); err != nil {
-				return err
-			}
-			return nil
-		}
-
-		err = OnOutputFile(o.dataFp.Name(), o.dataBuf[:dataBufBytes], o.writtenDataBytes, &OutputExtra{
+		err = LogMsgFileOp(o.dataFp.Name(), o.dataBuf[:dataBufBytes], o.writtenDataBytes, &OutputExtra{
 			Topic:            o.Writer.topic,
 			ContentCreatedAt: uint32(now.Unix()),
 		})
 		if err != nil {
 			// rollback
-			if err := undoData(); err != nil {
+			if err := o.undoData(); err != nil {
 				panic(err)
 			}
 			return err
@@ -299,29 +333,13 @@ func (o *output) write(msgList []*Msg) error {
 			return err
 		}
 
-		origIdxFileBytes := o.writtenIdxNum * idxBytes
-
-		undoIdx := func() error {
-			if err = o.idxFp.Truncate(int64(origIdxFileBytes)); err != nil {
-				if err = os.Truncate(o.idxFp.Name(), int64(origIdxFileBytes)); err != nil {
-					return err
-				}
-			}
-
-			if err = o.clearIdxUndo(); err != nil {
-				return err
-			}
-
-			return nil
-		}
-
-		err = OnOutputFile(o.idxFp.Name(), o.idxBuf[:idxBufBytes], origIdxFileBytes, &OutputExtra{
+		err = LogMsgFileOp(o.idxFp.Name(), o.idxBuf[:idxBufBytes], o.writtenIdxNum*idxBytes, &OutputExtra{
 			Topic:            o.Writer.topic,
 			ContentCreatedAt: uint32(now.Unix()),
 		})
 		if err != nil {
 			// data file has callback success, only rollback index file
-			if err := undoIdx(); err != nil {
+			if err := o.undoIdx(); err != nil {
 				panic(err)
 			}
 
@@ -398,12 +416,45 @@ func (o *output) logIdxUndo() error {
 	return nil
 }
 
+func (o *output) undoIdx() error {
+	origIdxFileBytes := binary.LittleEndian.Uint32(o.idxUndoBuf[bufBoundaryBytes+8:]) * idxBytes
+
+	if err := o.idxFp.Truncate(int64(origIdxFileBytes)); err != nil {
+		if err = os.Truncate(o.idxFp.Name(), int64(origIdxFileBytes)); err != nil {
+			return err
+		}
+	}
+
+	if err := o.clearIdxUndo(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
 func (o *output) clearIdxUndo() error {
 	if err := o.idxUndoFp.Truncate(0); err != nil {
 		if err = os.Truncate(o.idxUndoFp.Name(), 0); err != nil {
 			return err
 		}
 	}
+	return nil
+}
+
+func (o *output) undoData() error {
+	origWrittenDataBytes := binary.LittleEndian.Uint32(o.dataUndoBuf[bufBoundaryBytes+8:])
+	if err := o.dataFp.Truncate(int64(origWrittenDataBytes)); err != nil {
+		if err = os.Truncate(o.dataFp.Name(), int64(origWrittenDataBytes)); err != nil {
+			return err
+		}
+	}
+
+	o.writtenDataBytes = origWrittenDataBytes
+
+	if err := o.clearDataUndo(); err != nil {
+		return err
+	}
+
 	return nil
 }
 

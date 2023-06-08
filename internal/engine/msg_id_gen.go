@@ -9,7 +9,7 @@ import (
 
 const (
 	MsgIdFileSuffix     = ".mid"
-	MsgIdUndoFileSuffix = ".mid_wal"
+	MsgIdUndoFileSuffix = ".mid_undo."
 )
 
 const msgIdGenBytes = 12
@@ -43,6 +43,26 @@ func newMsgIdGen(baseDir, topic string) (*msgIdGen, error) {
 		return nil, err
 	}
 
+	undoFileInfo, err := gen.undoFp.Stat()
+	if err != nil {
+		return nil, err
+	}
+
+	if undoFileInfo.Size() > 0 {
+		n, err := gen.undoFp.ReadAt(gen.undoBuf[:], 0)
+		if err != nil && err != io.EOF {
+			return nil, err
+		}
+
+		if n != msgIdGenBytes {
+			return nil, errFileCorrupted
+		}
+
+		if err = gen.undo(); err != nil {
+			return nil, err
+		}
+	}
+
 	if !isNewCreate {
 		if err = gen.load(); err != nil {
 			return nil, err
@@ -55,16 +75,20 @@ func newMsgIdGen(baseDir, topic string) (*msgIdGen, error) {
 func (g *msgIdGen) Incr(incr uint64) error {
 	now := time.Now().Unix()
 
-	origMaxMsgId := g.curMaxMsgId
+	if err := g.logUndo(); err != nil {
+		return err
+	}
 
-	binary.LittleEndian.PutUint16(g.undoBuf[:bufBoundaryBytes], bufBoundaryBegin)
-	binary.LittleEndian.PutUint64(g.undoBuf[bufBoundaryBytes:bufBoundaryBytes+8], origMaxMsgId)
-	binary.LittleEndian.PutUint16(g.undoBuf[bufBoundaryEnd:], bufBoundaryEnd)
+	g.curMaxMsgId = g.curMaxMsgId + incr
+
+	binary.LittleEndian.PutUint16(g.buf[:bufBoundaryBytes], bufBoundaryBegin)
+	binary.LittleEndian.PutUint64(g.buf[bufBoundaryBytes:bufBoundaryBytes+8], g.curMaxMsgId)
+	binary.LittleEndian.PutUint16(g.buf[bufBoundaryEnd:], bufBoundaryEnd)
 	var total int
 	for {
-		n, err := g.undoFp.WriteAt(g.undoBuf[total:], int64(total))
+		n, err := g.fp.WriteAt(g.buf[total:], int64(total))
 		if err != nil {
-			if err := g.clearUndo(); err != nil {
+			if err := g.undo(); err != nil {
 				panic(err)
 			}
 			return err
@@ -77,39 +101,37 @@ func (g *msgIdGen) Incr(incr uint64) error {
 		}
 	}
 
-	g.curMaxMsgId = g.curMaxMsgId + incr
-
-	undo := func() error {
-		var total int
-		for {
-			n, err := g.fp.WriteAt(g.undoBuf[total:], int64(total))
-			if err != nil {
-				return err
-			}
-
-			total += n
-
-			if total >= msgIdGenBytes {
-				break
-			}
+	err := LogMsgFileOp(g.fp.Name(), g.buf[:], 0, &OutputExtra{
+		Topic:            g.topic,
+		ContentCreatedAt: uint32(now),
+	})
+	if err != nil {
+		if err := g.undo(); err != nil {
+			panic(err)
 		}
-		if err := g.clearUndo(); err != nil {
-			return err
-		}
-		g.curMaxMsgId = origMaxMsgId
-		return nil
+
+		return err
 	}
 
-	binary.LittleEndian.PutUint16(g.buf[:bufBoundaryBytes], bufBoundaryBegin)
-	binary.LittleEndian.PutUint64(g.buf[bufBoundaryBytes:bufBoundaryBytes+8], g.curMaxMsgId)
-	binary.LittleEndian.PutUint16(g.buf[bufBoundaryEnd:], bufBoundaryEnd)
-	total = 0
+	if err = g.clearUndo(); err != nil {
+		panic(err)
+	}
+
+	return nil
+}
+
+func (g *msgIdGen) logUndo() error {
+	binary.LittleEndian.PutUint16(g.undoBuf[:bufBoundaryBytes], bufBoundaryBegin)
+	binary.LittleEndian.PutUint64(g.undoBuf[bufBoundaryBytes:bufBoundaryBytes+8], g.curMaxMsgId)
+	binary.LittleEndian.PutUint16(g.undoBuf[bufBoundaryEnd:], bufBoundaryEnd)
+	var total int
 	for {
-		n, err := g.fp.WriteAt(g.buf[total:], int64(total))
+		n, err := g.undoFp.WriteAt(g.undoBuf[total:], int64(total))
 		if err != nil {
-			if err := undo(); err != nil {
-				return err
+			if err := g.clearUndo(); err != nil {
+				panic(err)
 			}
+
 			return err
 		}
 
@@ -120,20 +142,29 @@ func (g *msgIdGen) Incr(incr uint64) error {
 		}
 	}
 
-	err := OnOutputFile(g.fp.Name(), g.buf[:], 0, &OutputExtra{
-		Topic:            g.topic,
-		ContentCreatedAt: uint32(now),
-	})
-	if err != nil {
-		if err := undo(); err != nil {
+	return nil
+}
+
+func (g *msgIdGen) undo() error {
+	var total int
+	for {
+		n, err := g.fp.WriteAt(g.undoBuf[total:], int64(total))
+		if err != nil {
 			return err
 		}
+
+		total += n
+
+		if total >= msgIdGenBytes {
+			break
+		}
+	}
+
+	if err := g.clearUndo(); err != nil {
 		return err
 	}
 
-	if err = g.clearUndo(); err != nil {
-		return err
-	}
+	g.curMaxMsgId = binary.LittleEndian.Uint64(g.undoBuf[bufBoundaryBytes : bufBoundaryBytes+8])
 
 	return nil
 }

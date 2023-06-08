@@ -1,7 +1,6 @@
-package handler
+package service
 
 import (
-	"github.com/995933447/bucketmq/internal/engine"
 	"github.com/995933447/bucketmq/internal/server/snrpc"
 	"github.com/995933447/bucketmq/internal/util"
 	"github.com/995933447/bucketmq/pkg/rpc/consumer"
@@ -29,7 +28,7 @@ func NewConsumer(srv *snrpc.Server, checkHeartBeatInterval time.Duration) *Consu
 		heartBeatCh:            make(chan net.Conn),
 		checkHeartBeatInterval: checkHeartBeatInterval,
 	}
-	go handler.loop()
+	handler.loop()
 	return handler
 }
 
@@ -121,9 +120,9 @@ func (c *Consumer) RegConsumer(conn net.Conn, req *consumer.ConnSNSrvReq) error 
 	return nil
 }
 
-func (c *Consumer) Consume(consumer, topic, subscriber string, timeout time.Duration, msg *engine.FileMsg) (*consumer.ConsumeResp, error) {
+func (c *Consumer) CallbackConsumer(req *consumer.ConsumeReq) (*consumer.ConsumeResp, error) {
 	c.opConnsMu.RLock()
-	conns, ok := c.consumerToConnSetMap[consumer]
+	conns, ok := c.consumerToConnSetMap[req.Consumer]
 	if !ok {
 		c.opConnsMu.RUnlock()
 		return nil, errs.RPCErr(errs.ErrCode_ErrCodeConsumerNotFound, "")
@@ -145,11 +144,13 @@ func (c *Consumer) Consume(consumer, topic, subscriber string, timeout time.Dura
 	}
 
 	var resp consumerrpc.ConsumeResp
-	err := c.srv.Callback(destConn, timeout, uint32(snrpcx.SNRPCProto_SNRPCProtoConsume), &consumerrpc.ConsumeReq{
-		Topic:      topic,
-		Subscriber: subscriber,
-		Data:       msg.GetData(),
-		RetriedCnt: msg.GetRetriedCnt(),
+	err := c.srv.Callback(destConn, time.Duration(req.TimeoutMs)*time.Millisecond, uint32(snrpcx.SNRPCProto_SNRPCProtoConsume), &consumerrpc.ConsumeReq{
+		Topic:      req.Topic,
+		Subscriber: req.Subscriber,
+		Consumer:   req.Consumer,
+		Data:       req.Data,
+		RetriedCnt: req.RetriedCnt,
+		TimeoutMs:  req.TimeoutMs,
 	}, &resp)
 	if err != nil {
 		return nil, err
@@ -159,11 +160,15 @@ func (c *Consumer) Consume(consumer, topic, subscriber string, timeout time.Dura
 }
 
 func (c *Consumer) RegSNRPCProto(srv *snrpc.Server) {
-	srv.RegProto(uint32(snrpcx.SNRPCProto_SNRPCProtoConsumerConnect), &consumer.ConsumeReq{}, func(conn net.Conn, req proto.Message) (proto.Message, error) {
+	srv.RegProto(uint32(snrpcx.SNRPCProto_SNRPCProtoConsumerConnect), &consumer.ConnSNSrvReq{}, func(conn net.Conn, req proto.Message) (proto.Message, error) {
 		specReq := req.(*consumer.ConnSNSrvReq)
 		if err := c.RegConsumer(conn, specReq); err != nil {
 			return nil, err
 		}
 		return &consumer.ConsumeResp{}, nil
+	})
+
+	srv.RegProto(uint32(snrpcx.SNRPCProto_SNRPCProtoConsume), &consumer.ConsumeReq{}, func(conn net.Conn, req proto.Message) (proto.Message, error) {
+		return c.CallbackConsumer(req.(*consumer.ConsumeReq))
 	})
 }

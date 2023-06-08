@@ -3,17 +3,32 @@ package ha
 import (
 	"context"
 	"encoding/json"
-	"fmt"
+	"errors"
 	"github.com/995933447/bucketmq/internal/syscfg"
 	"github.com/995933447/bucketmq/internal/util"
+	"github.com/995933447/microgosuit/discovery"
 	clientv3 "go.etcd.io/etcd/client/v3"
 	"sync/atomic"
 )
 
-const (
-	NodeGrpHAMetaEtcdKeyPrefix = "bucketMQ_nodeGrp_meta_"
-	NodeGrpElectEtcdKeyPrefix  = "bucketMQ_nodeGrp_elect_"
+var (
+	ErrLostMaster         = errors.New("current node lost master role")
+	ErrMasterNodeNotFound = errors.New("master node not found")
 )
+
+var (
+	MaxSyncedLogId     uint64
+	TermOfMaxSyncedLog uint64
+	LastSyncedLogAt    uint32
+)
+
+const (
+	NodeGrpHAMetaEtcdKeyPrefix         = "bucketMQ_nodeGrp_meta_"
+	NodeGrpElectEtcdKeyPrefix          = "bucketMQ_nodeGrp_elect_"
+	NodeGrpMasterDiscoverEtcdKeyPrefix = "bucketMQ_nodeGrp_elect_"
+)
+
+var MeAsMasterDiscoverEtcdLeaseCancelFunc context.CancelFunc
 
 var (
 	NodeGrpMasterElectEtcdKey              string
@@ -24,6 +39,74 @@ type NodeHAMeta struct {
 	ElectTerm        uint64
 	MaxSyncLogId     uint64
 	TermOfMaxSyncLog uint64
+}
+
+func GetNodeGrpMasterNodeEtcdKey() string {
+	return NodeGrpMasterDiscoverEtcdKeyPrefix + syscfg.MustCfg().Cluster + "_" + syscfg.MustCfg().NodeGrp
+}
+
+func SaveNodeGrpMasterDiscover(etcdCli *clientv3.Client, node *discovery.Node) error {
+	nodeJ, err := json.Marshal(node)
+	if err != nil {
+		util.Logger.Error(nil, err)
+		return err
+	}
+
+	grantReleaseResp, err := etcdCli.Grant(context.Background(), 5)
+	if err != nil {
+		return err
+	}
+
+	releaseId := grantReleaseResp.ID
+
+	ctx, cancel := context.WithCancel(etcdCli.Ctx())
+	keepAlive, err := etcdCli.KeepAlive(ctx, releaseId)
+	if err != nil || keepAlive == nil {
+		cancel()
+		return err
+	}
+
+	putResp, err := etcdCli.
+		Txn(context.Background()).
+		If(clientv3.Compare(clientv3.CreateRevision(NodeGrpMasterElectEtcdKey), "=", NodeGrpMasterElectEtcdKeyCreateVersion)).
+		Then(clientv3.OpPut(GetNodeGrpMasterNodeEtcdKey(), string(nodeJ), clientv3.WithLease(releaseId))).
+		Commit()
+	if err != nil {
+		cancel()
+		util.Logger.Error(nil, err)
+		return err
+	}
+
+	if !putResp.Succeeded {
+		cancel()
+		RevokeMasterRole()
+		return ErrLostMaster
+	}
+
+	MeAsMasterDiscoverEtcdLeaseCancelFunc = cancel
+
+	return nil
+}
+
+func GetNodeGrpMasterDiscover(etcdCli *clientv3.Client) (*discovery.Node, error) {
+	getResp, err := etcdCli.Get(context.Background(), GetNodeGrpMasterNodeEtcdKey())
+	if err != nil {
+		util.Logger.Error(nil, err)
+		return nil, err
+	}
+
+	if len(getResp.Kvs) == 0 {
+		return nil, ErrMasterNodeNotFound
+	}
+
+	var node discovery.Node
+	err = json.Unmarshal(getResp.Kvs[0].Value, &node)
+	if err != nil {
+		util.Logger.Error(nil, err)
+		return nil, err
+	}
+
+	return &node, nil
 }
 
 func GetNodeGrpHAMetaEtcdKey() string {
@@ -56,11 +139,11 @@ func GetNodeGrpHAMeta(etcdCli *clientv3.Client) (*NodeHAMeta, error) {
 	return &meta, nil
 }
 
-func SaveNodeGrpHAMetaByMasterRole(etcdCli *clientv3.Client, meta *NodeHAMeta) (bool, error) {
+func SaveNodeGrpHAMetaByMasterRole(etcdCli *clientv3.Client, meta *NodeHAMeta) error {
 	metaJ, err := json.Marshal(meta)
 	if err != nil {
 		util.Logger.Error(nil, err)
-		return false, err
+		return err
 	}
 
 	putResp, err := etcdCli.
@@ -70,15 +153,15 @@ func SaveNodeGrpHAMetaByMasterRole(etcdCli *clientv3.Client, meta *NodeHAMeta) (
 		Commit()
 	if err != nil {
 		util.Logger.Error(nil, err)
-		return false, err
+		return err
 	}
 
 	if !putResp.Succeeded {
 		RevokeMasterRole()
-		return false, nil
+		return nil
 	}
 
-	return true, nil
+	return ErrLostMaster
 }
 
 var (
@@ -97,6 +180,7 @@ func SwitchMasterRole(term uint64) {
 
 func RevokeMasterRole() {
 	isMasterRole.Store(false)
+	MeAsMasterDiscoverEtcdLeaseCancelFunc()
 }
 
 func IsMasterRole() bool {
@@ -115,10 +199,4 @@ func RefreshIsMasterRole(etcdCli *clientv3.Client) (bool, error) {
 	}
 
 	return getResp.Kvs[0].CreateRevision == NodeGrpMasterElectEtcdKeyCreateVersion, nil
-}
-
-const MaxSyncLogIdEtcdKeyPrefix = ""
-
-func GetMaxSyncLogIdEtcdKey() string {
-	return fmt.Sprintf(MaxSyncLogIdEtcdKeyPrefix + "cluster_" + syscfg.MustCfg().Cluster + "_sync_log_msg_id")
 }

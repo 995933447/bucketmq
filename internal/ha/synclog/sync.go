@@ -9,6 +9,7 @@ import (
 	"github.com/995933447/bucketmq/pkg/rpc/ha"
 	"github.com/995933447/microgosuit/discovery"
 	clientv3 "go.etcd.io/etcd/client/v3"
+	"time"
 )
 
 type Sync struct {
@@ -20,33 +21,45 @@ type Sync struct {
 }
 
 func (s *Sync) BackupMasterLogMeta() error {
+	if !s.needBackupMasterLogMeta.Load() {
+		return nil
+	}
+
 	meta, err := nodegrpha.GetNodeGrpHAMeta(s.etcdCli)
 	if err != nil {
 		return err
 	}
 
+	defer func() {
+		s.needBackupMasterLogMeta.Store(false)
+	}()
+
 	meta.MaxSyncLogId = s.Writer.output.msgIdGen.curMaxMsgId
 	meta.TermOfMaxSyncLog = nodegrpha.GetCurElectTerm()
 
-	_, err = nodegrpha.SaveNodeGrpHAMetaByMasterRole(s.etcdCli, meta)
+	err = nodegrpha.SaveNodeGrpHAMetaByMasterRole(s.etcdCli, meta)
 	if err != nil {
 		return err
 	}
 
-	unlock, err := util.DistributeLockNodeGrpForUpdateDiscovery(s.etcdCli)
+	nodegrpha.MaxSyncedLogId = meta.MaxSyncLogId
+	nodegrpha.TermOfMaxSyncedLog = meta.TermOfMaxSyncLog
+	nodegrpha.LastSyncedLogAt = uint32(time.Now().Unix())
+
+	unlock, err := util.DistributeLockForUpdateDiscovery(s.etcdCli)
 	if err != nil {
 		return err
 	}
 
 	defer unlock()
 
-	node, ok, err := util.DiscoverMyNode(s.Discovery)
+	node, exist, err := util.DiscoverMyNode(s.Discovery)
 	if err != nil {
 		return err
 	}
 
-	if !ok {
-		return nil
+	if !exist {
+		return nodegrpha.ErrMasterNodeNotFound
 	}
 
 	var nodeDesc ha.Node
@@ -70,17 +83,13 @@ func (s *Sync) BackupMasterLogMeta() error {
 	return nil
 }
 
-func NewSync(baseDir string) (*Sync, error) {
+func NewSync(baseDir string, etcdCli *clientv3.Client) (*Sync, error) {
 	sync := &Sync{
 		baseDir: baseDir,
+		etcdCli: etcdCli,
 	}
 
 	var err error
-	sync.etcdCli, err = util.GetOrNewEtcdCli()
-	if err != nil {
-		return nil, err
-	}
-
 	sync.Writer, err = NewWriter(sync)
 	if err != nil {
 		return nil, err

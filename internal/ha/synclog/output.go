@@ -2,11 +2,9 @@ package synclog
 
 import (
 	"encoding/binary"
-	"fmt"
+	nodegrpha "github.com/995933447/bucketmq/internal/ha"
 	"github.com/995933447/bucketmq/internal/util"
 	"os"
-	"strconv"
-	"strings"
 	"time"
 )
 
@@ -16,11 +14,24 @@ import (
 //	2                |   V  |       2
 //
 // index file format is
-// item begin marker | created at | data offset | data len  | msgId | item end marker
+// item begin marker | created at | data offset | data len  | msgId | elect term |item end marker
 //
-//	2                |      4     |   4         |      4   |    8   |   2
-
-const idxBytes = 14
+//	2                |      4     |   4         |      4   |    8   |      8     | 2
+//
+// undo index file format is:
+// item begin marker | idx num  | item end marker
+//
+//	2                |   4      |   2
+//
+// undo data file format is:
+// item begin marker | size  | item end marker
+//
+//	2                |   4   |   2
+const (
+	IdxBytes      = 32
+	idxUndoBytes  = 8
+	dataUndoBytes = 8
+)
 
 const (
 	IdxFileSuffix  = ".idx"
@@ -54,11 +65,15 @@ type output struct {
 	dateTimeSeq      string
 	idxFp            *os.File
 	dataFp           *os.File
+	idxUndoFp        *os.File
+	dataUndoFp       *os.File
 	writtenIdxNum    uint32
 	writtenDataBytes uint32
 	openFileTime     time.Time
 	idxBuf           []byte
 	dataBuf          []byte
+	idxUndoBuf       [idxUndoBytes]byte
+	dataUndoBuf      [dataUndoBytes]byte
 }
 
 func (o *output) isCorrupted() (bool, error) {
@@ -68,16 +83,16 @@ func (o *output) isCorrupted() (bool, error) {
 			return false, err
 		}
 		curBytes := uint32(fileState.Size())
-		if curBytes%idxBytes != 0 {
+		if curBytes%IdxBytes != 0 {
 			return true, nil
 		}
-		expectBytes := o.writtenIdxNum * idxBytes
+		expectBytes := o.writtenIdxNum * IdxBytes
 		if expectBytes != curBytes {
 			if curBytes < expectBytes {
 				return true, nil
 			} else {
 				// reset index
-				o.writtenIdxNum = curBytes / idxBytes
+				o.writtenIdxNum = curBytes / IdxBytes
 			}
 		}
 	}
@@ -116,31 +131,32 @@ func (o *output) write(msgList []*Msg) error {
 		return nil
 	}
 
-	bin := binary.LittleEndian
 	for {
 		accumIdxNum := o.writtenIdxNum
 		accumDataBytes := o.writtenDataBytes
 		firstMsg := msgList[0]
 		firstMsgHour := time.Unix(int64(firstMsg.logItem.CreatedAt), 0).Hour()
-		firstMsgNOSeq := o.curMaxMsgId + 1
+
+		var firstMsgNOSeq uint64
+		if firstMsg.logItem.IsSyncFromMaster {
+			firstMsgNOSeq = firstMsg.logItem.LogId
+		} else {
+			firstMsgNOSeq = o.curMaxMsgId + 1
+		}
+
 		for _, msg := range msgList {
 			if time.Unix(int64(firstMsg.logItem.CreatedAt), 0).Hour() != firstMsgHour {
 				break
 			}
-			incrementBytes := uint32(len(msg.logItem.FileBuf))
-			incrementBytes += bufBoundariesBytes
+			incrDataBytes := uint32(len(msg.logItem.FileBuf))
+			incrDataBytes += bufBoundariesBytes
 			accumIdxNum++
-			accumDataBytes += incrementBytes
+			accumDataBytes += incrDataBytes
 		}
 
 		batchWriteIdxNum := accumIdxNum - o.writtenIdxNum
 
-		origMaxMsgId := o.msgIdGen.curMaxMsgId
-		if err := o.msgIdGen.Incr(uint64(batchWriteIdxNum)); err != nil {
-			return err
-		}
-
-		idxBufBytes := batchWriteIdxNum * idxBytes
+		idxBufBytes := batchWriteIdxNum * IdxBytes
 		if uint32(len(o.idxBuf)) < idxBufBytes {
 			o.idxBuf = make([]byte, idxBufBytes)
 		}
@@ -157,119 +173,174 @@ func (o *output) write(msgList []*Msg) error {
 			msg := msgList[i]
 			bufBytes := len(msg.logItem.FileBuf)
 
-			bin.PutUint16(dataBuf[:bufBoundaryBytes], bufBoundaryBegin)
+			binary.LittleEndian.PutUint16(dataBuf[:bufBoundaryBytes], bufBoundaryBegin)
 			copy(dataBuf[bufBoundaryBytes:], msg.logItem.FileBuf)
-			bin.PutUint16(dataBuf[bufBoundaryBytes+bufBytes:], bufBoundaryEnd)
+			binary.LittleEndian.PutUint16(dataBuf[bufBoundaryBytes+bufBytes:], bufBoundaryEnd)
 			dataItemBufBytes := bufBytes + bufBoundariesBytes
 			dataBuf = dataBuf[dataItemBufBytes:]
 
-			bin.PutUint16(idxBuf[:bufBoundaryBytes], bufBoundaryBegin)
+			binary.LittleEndian.PutUint16(idxBuf[:bufBoundaryBytes], bufBoundaryBegin)
 			idxBuf = idxBuf[bufBoundaryBytes:]
-			bin.PutUint32(idxBuf[0:4], msg.logItem.CreatedAt)     // created at
-			bin.PutUint32(idxBuf[4:8], dataBufOffset)             // offset
-			bin.PutUint32(idxBuf[8:12], uint32(dataItemBufBytes)) // size
-			bin.PutUint64(idxBuf[12:20], origMaxMsgId+uint64(i+1))
-			bin.PutUint16(idxBuf[20:], bufBoundaryEnd)
-			idxBuf = idxBuf[20+bufBoundaryBytes:]
+			binary.LittleEndian.PutUint32(idxBuf[0:4], msg.logItem.CreatedAt)     // created at
+			binary.LittleEndian.PutUint32(idxBuf[4:8], dataBufOffset)             // offset
+			binary.LittleEndian.PutUint32(idxBuf[8:12], uint32(dataItemBufBytes)) // size
+			if !firstMsg.logItem.IsSyncFromMaster {
+				binary.LittleEndian.PutUint64(idxBuf[12:20], o.msgIdGen.curMaxMsgId+uint64(i+1))
+			} else {
+				binary.LittleEndian.PutUint64(idxBuf[12:20], msg.logItem.LogId)
+			}
+			binary.LittleEndian.PutUint64(idxBuf[20:28], nodegrpha.GetCurElectTerm())
+			binary.LittleEndian.PutUint16(idxBuf[28:], bufBoundaryEnd)
+			idxBuf = idxBuf[28+bufBoundaryBytes:]
 
 			dataBufOffset += uint32(dataItemBufBytes)
 		}
 
 		dateTimeSeq := time.Unix(int64(firstMsg.logItem.CreatedAt), 0).Format("2006010215")
 		if o.dateTimeSeq != dateTimeSeq {
-			o.idxFp = nil
-			o.dataFp = nil
-			dir := GetHADataDir(o.Writer.baseDir)
-			if err := mkdirIfNotExist(dir); err != nil {
-				return err
-			}
-
-			files, err := os.ReadDir(dir)
+			var err error
+			o.idxFp, o.dataFp, o.nOSeq, err = openOrCreateDateTimeFps(o.Writer.baseDir, dateTimeSeq, firstMsgNOSeq)
 			if err != nil {
 				return err
 			}
-
-			for _, file := range files {
-				if !strings.HasSuffix(file.Name(), IdxFileSuffix) {
-					continue
-				}
-
-				if !strings.Contains(file.Name(), dateTimeSeq) {
-					continue
-				}
-
-				nOSeqStr, ok := ParseFileNOSeqStr(file)
-				if !ok {
-					continue
-				}
-
-				var nOSeq uint64
-				if nOSeqStr != "" {
-					var err error
-					nOSeq, err = strconv.ParseUint(nOSeqStr, 10, 64)
-					if err != nil {
-						return err
-					}
-				}
-
-				o.dateTimeSeq = dateTimeSeq
-				o.nOSeq = nOSeq
-				o.idxFp, err = os.OpenFile(dir+"/"+file.Name(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
-				if err != nil {
-					return err
-				}
-				o.dataFp, err = os.OpenFile(dir+"/"+strings.ReplaceAll(file.Name(), IdxFileSuffix, DataFileSuffix), os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
-				if err != nil {
-					return err
-				}
-			}
-
-			if o.idxFp == nil || o.dataFp == nil {
-				o.dateTimeSeq = dateTimeSeq
-				o.nOSeq = firstMsgNOSeq
-				o.idxFp, err = os.OpenFile(dir+"/"+fmt.Sprintf("%s_%d.%s", o.dateTimeSeq, o.nOSeq, IdxFileSuffix), os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
-				if err != nil {
-					return err
-				}
-				o.idxFp, err = os.OpenFile(dir+"/"+fmt.Sprintf("%s_%d.%s", o.dateTimeSeq, o.nOSeq, DataFileSuffix), os.O_CREATE|os.O_WRONLY|os.O_APPEND, os.ModePerm)
-				if err != nil {
-					return err
-				}
-			}
+			o.dateTimeSeq = dateTimeSeq
 		}
 
-		n, err := o.dataFp.Write(o.dataBuf[:dataBufBytes])
-		if err != nil {
+		if err := o.logDataUndo(); err != nil {
 			return err
 		}
-		for uint32(n) < dataBufBytes {
-			more, err := o.dataFp.Write(o.dataBuf[n:dataBufBytes])
-			if err != nil {
-				return err
-			}
-			n += more
-		}
 
-		n, err = o.idxFp.Write(o.idxBuf[:idxBufBytes])
-		if err != nil {
+		if _, err := o.dataFp.Write(o.dataBuf[:dataBufBytes]); err != nil {
 			return err
 		}
-		for uint32(n) < idxBufBytes {
-			more, err := o.idxFp.Write(o.idxBuf[n:idxBufBytes])
-			if err != nil {
-				return err
+
+		if err := o.logIdxUndo(); err != nil {
+			return err
+		}
+
+		if _, err := o.idxFp.Write(o.idxBuf[:idxBufBytes]); err != nil {
+			if err := o.undoData(); err != nil {
+				panic(err)
 			}
-			n += more
+
+			return err
 		}
 
 		if !firstMsg.logItem.IsSyncFromMaster {
+			if err := o.msgIdGen.logUndo(); err != nil {
+				if err := o.undoData(); err != nil {
+					panic(err)
+				}
+
+				if err := o.undoIdx(); err != nil {
+					panic(err)
+				}
+
+				return err
+			}
+
+			if err := o.msgIdGen.incrWithoutUndoProtect(uint64(batchWriteIdxNum)); err != nil {
+				if err := o.undoData(); err != nil {
+					panic(err)
+				}
+
+				if err := o.undoIdx(); err != nil {
+					panic(err)
+				}
+
+				if err := o.msgIdGen.undo(); err != nil {
+					panic(err)
+				}
+
+				return err
+			}
+
 			if o.Writer.isRealTimeBackupMasterLogMeta {
-				if err = o.Writer.BackupMasterLogMeta(); err != nil {
+				err := o.Writer.BackupMasterLogMeta()
+				if err != nil {
+					if err := o.undoData(); err != nil {
+						panic(err)
+					}
+
+					if err := o.undoIdx(); err != nil {
+						panic(err)
+					}
+
+					if err := o.msgIdGen.undo(); err != nil {
+						panic(err)
+					}
+
 					return err
 				}
 			}
-		} else if err = o.finishRc.updateWaterMark(o.nOSeq, o.dateTimeSeq, o.msgIdGen.curMaxMsgId); err != nil {
-			return err
+
+			if err := o.clearDataUndo(); err != nil {
+				panic(err)
+			}
+
+			if err := o.clearIdxUndo(); err != nil {
+				panic(err)
+			}
+
+			if err := o.msgIdGen.clearUndo(); err != nil {
+				panic(err)
+			}
+		} else {
+			if err := o.msgIdGen.logUndo(); err != nil {
+				if err := o.undoData(); err != nil {
+					panic(err)
+				}
+
+				if err := o.undoIdx(); err != nil {
+					panic(err)
+				}
+
+				return err
+			}
+
+			if err := o.msgIdGen.resetWithoutUndoProtect(msgList[batchWriteIdxNum-1].logItem.LogId); err != nil {
+				if err := o.undoData(); err != nil {
+					panic(err)
+				}
+
+				if err := o.undoIdx(); err != nil {
+					panic(err)
+				}
+
+				if err := o.msgIdGen.undo(); err != nil {
+					panic(err)
+				}
+
+				return err
+			}
+
+			if err := o.finishRc.updateWaterMark(o.nOSeq, o.dateTimeSeq, accumIdxNum); err != nil {
+				if err := o.undoData(); err != nil {
+					panic(err)
+				}
+
+				if err := o.undoIdx(); err != nil {
+					panic(err)
+				}
+
+				if err := o.msgIdGen.undo(); err != nil {
+					panic(err)
+				}
+
+				return err
+			}
+
+			if err := o.clearDataUndo(); err != nil {
+				panic(err)
+			}
+
+			if err := o.clearIdxUndo(); err != nil {
+				panic(err)
+			}
+
+			if err := o.msgIdGen.clearUndo(); err != nil {
+				panic(err)
+			}
 		}
 
 		for _, msg := range msgList {
@@ -296,4 +367,101 @@ func (o *output) close() {
 	o.writtenDataBytes = 0
 	o.writtenIdxNum = 0
 	o.openFileTime = time.Time{}
+}
+
+func (o *output) logIdxUndo() error {
+	binary.LittleEndian.PutUint16(o.idxUndoBuf[:bufBoundaryBytes], bufBoundaryBegin)
+	binary.LittleEndian.PutUint32(o.idxUndoBuf[bufBoundaryBytes:], o.writtenIdxNum)
+	binary.LittleEndian.PutUint16(o.idxUndoBuf[idxUndoBytes-bufBoundaryBytes:], bufBoundaryEnd)
+	total := 0
+	for {
+		n, err := o.idxUndoFp.WriteAt(o.idxUndoBuf[total:], int64(total))
+		if err != nil {
+			if err := o.clearIdxUndo(); err != nil {
+				panic(err)
+			}
+			return err
+		}
+
+		total += n
+
+		if total >= idxUndoBytes {
+			break
+		}
+	}
+	return nil
+}
+
+func (o *output) undoIdx() error {
+	origIdxFileBytes := binary.LittleEndian.Uint32(o.idxUndoBuf[bufBoundaryBytes:]) * IdxBytes
+
+	if err := o.idxFp.Truncate(int64(origIdxFileBytes)); err != nil {
+		if err = os.Truncate(o.idxFp.Name(), int64(origIdxFileBytes)); err != nil {
+			return err
+		}
+	}
+
+	if err := o.clearIdxUndo(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (o *output) clearIdxUndo() error {
+	if err := o.idxUndoFp.Truncate(0); err != nil {
+		if err = os.Truncate(o.idxUndoFp.Name(), 0); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (o *output) logDataUndo() error {
+	binary.LittleEndian.PutUint16(o.dataUndoBuf[:bufBoundaryBytes], bufBoundaryBegin)
+	binary.LittleEndian.PutUint32(o.dataUndoBuf[bufBoundaryBytes:], o.writtenDataBytes)
+	binary.LittleEndian.PutUint16(o.dataUndoBuf[idxUndoBytes-bufBoundaryBytes:], bufBoundaryEnd)
+	var total int
+	for {
+		n, err := o.dataUndoFp.WriteAt(o.dataUndoBuf[total:], int64(total))
+		if err != nil {
+			if err := o.clearDataUndo(); err != nil {
+				panic(err)
+			}
+			return err
+		}
+
+		total += n
+
+		if total >= idxUndoBytes {
+			break
+		}
+	}
+	return nil
+}
+
+func (o *output) undoData() error {
+	origWrittenDataBytes := binary.LittleEndian.Uint32(o.dataUndoBuf[bufBoundaryBytes:])
+	if err := o.dataFp.Truncate(int64(origWrittenDataBytes)); err != nil {
+		if err = os.Truncate(o.dataFp.Name(), int64(origWrittenDataBytes)); err != nil {
+			return err
+		}
+	}
+
+	o.writtenDataBytes = origWrittenDataBytes
+
+	if err := o.clearDataUndo(); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (o *output) clearDataUndo() error {
+	if err := o.dataUndoFp.Truncate(0); err != nil {
+		if err = os.Truncate(o.dataUndoFp.Name(), 0); err != nil {
+			return err
+		}
+	}
+	return nil
 }
