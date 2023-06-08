@@ -2,14 +2,12 @@ package cli
 
 import (
 	"context"
-	"encoding/json"
 	"github.com/995933447/bucketmq/pkg/discover"
 	"github.com/995933447/bucketmq/pkg/rpc/broker"
 	"github.com/995933447/bucketmq/pkg/rpc/consumer"
-	"github.com/995933447/bucketmq/pkg/rpc/ha"
 	"github.com/995933447/bucketmq/pkg/rpc/health"
 	"github.com/995933447/bucketmq/pkg/rpc/snrpc"
-	"github.com/995933447/microgosuit/discovery"
+	"github.com/995933447/microgosuit/discovery/util"
 	"github.com/golang/protobuf/proto"
 	"sync"
 	"time"
@@ -42,45 +40,12 @@ func (c *Consumer) Subscribe(cfg *broker.Subscriber, handleFunc snrpc.HandleMsgF
 
 		var connectSNPRPCSrv func() error
 		connectSNPRPCSrv = func() error {
-			getTopicResp, err := c.cli.BrokerClient.GetTopic(context.Background(), &broker.GetTopicReq{
-				Topic: cfg.Topic,
-			})
+			node, err := util.Route(context.Background(), c.cli.discovery, discover.SrvNameBroker)
 			if err != nil {
 				return err
 			}
 
-			var destNode *discovery.Node
-			for {
-				brokerCfg, err := c.cli.discovery.Discover(context.Background(), discover.SrvNameBroker)
-				for _, node := range brokerCfg.Nodes {
-					if !node.Available() {
-						continue
-					}
-
-					var nodeDesc ha.Node
-					err = json.Unmarshal([]byte(node.Extra), &nodeDesc)
-					if err != nil {
-						return err
-					}
-
-					if nodeDesc.NodeGrp != getTopicResp.Topic.NodeGrp {
-						continue
-					}
-
-					if nodeDesc.IsMaster {
-						destNode = node
-						break
-					}
-				}
-
-				if destNode != nil {
-					break
-				}
-
-				time.Sleep(time.Second)
-			}
-
-			snrpcCli, err := snrpc.NewCli(destNode.Host, destNode.Port, func(err error) {
+			snrpcCli, err := snrpc.NewCli(node.Host, node.Port, func(err error) {
 				c.opSNRPCClisMu.Lock()
 				defer c.opSNRPCClisMu.Unlock()
 

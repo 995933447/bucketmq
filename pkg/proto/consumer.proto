@@ -10,8 +10,10 @@ service Consumer {
 message ConsumeReq {
     string topic = 1;
     string subscriber = 2;
-    bytes data = 3;
-    uint32 retried_cnt = 4;
+    string consumer = 3;
+    bytes data = 4;
+    uint32 retried_cnt = 5;
+    uint32 timeout_ms = 6;
 }
 
 message ConsumeResp {

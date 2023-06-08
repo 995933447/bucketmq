@@ -10,7 +10,9 @@ import (
 	"github.com/995933447/microgosuit/grpcsuit"
 	"github.com/995933447/microgosuit/grpcsuit/handler/health"
 	"github.com/995933447/microgosuit/log"
+	clientv3 "go.etcd.io/etcd/client/v3"
 	"google.golang.org/grpc"
+	"sync"
 	"sync/atomic"
 	"time"
 )
@@ -20,10 +22,12 @@ const checkWorkerPoolSize = 100
 type Node struct {
 	srvName string
 	detail  *discovery.Node
+	checkWg *sync.WaitGroup
 }
 
-func NewHealthChecker(disc discovery.Discovery, checkWorkerPoolSize, checkIntervalMs uint32) *HealthChecker {
+func NewHealthChecker(etcdCli *clientv3.Client, disc discovery.Discovery, checkWorkerPoolSize, checkIntervalMs uint32) *HealthChecker {
 	return &HealthChecker{
+		etcdCli:             etcdCli,
 		Discovery:           disc,
 		checkWorkerPoolSize: checkWorkerPoolSize,
 		checkIntervalMs:     checkIntervalMs,
@@ -32,6 +36,7 @@ func NewHealthChecker(disc discovery.Discovery, checkWorkerPoolSize, checkInterv
 
 type HealthChecker struct {
 	discovery.Discovery
+	etcdCli             *clientv3.Client
 	checkWorkerPoolSize uint32
 	checkIntervalMs     uint32
 	isPaused            atomic.Bool
@@ -138,6 +143,14 @@ func (h *HealthChecker) Run() error {
 			continue
 		}
 
+		var checkWg sync.WaitGroup
+
+		unlock, err := util.DistributeLockForUpdateDiscovery(h.etcdCli)
+		if err != nil {
+			time.Sleep(time.Second * 3)
+			continue
+		}
+
 		services, err := h.Discovery.LoadAll(context.Background())
 		if err != nil {
 			time.Sleep(time.Second * 3)
@@ -146,12 +159,17 @@ func (h *HealthChecker) Run() error {
 
 		for _, srv := range services {
 			for _, node := range srv.Nodes {
+				checkWg.Add(1)
 				nodeCh <- &Node{
 					srvName: srv.SrvName,
 					detail:  node,
+					checkWg: &checkWg,
 				}
 			}
 		}
+
+		checkWg.Wait()
+		unlock()
 
 		time.Sleep(time.Millisecond * time.Duration(h.checkIntervalMs))
 	}
@@ -167,6 +185,7 @@ func (h *HealthChecker) work(nodeCh chan *Node, exitCh chan struct{}) {
 				if err := h.check(node); err != nil {
 					log.Logger.Error(nil, err)
 				}
+				node.checkWg.Done()
 			}
 		}
 	out:
