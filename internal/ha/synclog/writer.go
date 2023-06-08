@@ -5,6 +5,7 @@ import (
 	"github.com/995933447/bucketmq/internal/util"
 	"github.com/995933447/bucketmq/pkg/rpc/ha"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -23,6 +24,7 @@ type Writer struct {
 	flushWait                     sync.WaitGroup
 	status                        runState
 	isRealTimeBackupMasterLogMeta bool
+	needBackupMasterLogMeta       atomic.Bool
 }
 
 func (w *Writer) loop() {
@@ -46,13 +48,9 @@ func (w *Writer) loop() {
 				return
 			}
 
-			ok, err := w.BackupMasterLogMeta()
+			err := w.BackupMasterLogMeta()
 			if err != nil {
 				util.Logger.Error(nil, err)
-			}
-
-			if !ok {
-				util.Logger.Error(nil, nodegrpha.ErrLostMaster)
 			}
 		case <-syncDiskTk.C:
 			if w.output != nil {
@@ -75,6 +73,7 @@ func (w *Writer) loop() {
 			if err := w.doWriteMost([]*Msg{msg}); err != nil {
 				util.Logger.Error(nil, err)
 			}
+			w.Sync.Consumer.watchNewLogCh <- struct{}{}
 		case <-w.flushSignCh:
 			if err := w.doWriteMost(nil); err != nil {
 				util.Logger.Error(nil, err)

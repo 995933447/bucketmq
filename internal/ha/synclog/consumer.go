@@ -4,12 +4,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	nodegrpha "github.com/995933447/bucketmq/internal/ha"
 	"github.com/995933447/bucketmq/internal/util"
 	"github.com/995933447/bucketmq/pkg/discover"
 	"github.com/995933447/bucketmq/pkg/rpc/ha"
 	"github.com/995933447/microgosuit/discovery"
 	"github.com/995933447/microgosuit/grpcsuit"
-	"github.com/fsnotify/fsnotify"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 	"os"
@@ -74,29 +74,21 @@ type Consumer struct {
 	msgNum            uint32
 	unsubscribeSignCh chan struct{}
 	confirmMsgCh      chan *confirmMsgReq
+	watchNewLogCh     chan struct{}
 }
 
 func (c *Consumer) Start() error {
-	fileWatcher, err := fsnotify.NewWatcher()
-	if err != nil {
-		return err
-	}
-
 	if c.IsRunning() {
 		return errors.New("already in running")
 	}
 
 	c.status = runStateRunning
 
-	// windows no fsnotify
-	directlyTrySwitchFileTk := time.NewTicker(time.Second * 2)
-	defer directlyTrySwitchFileTk.Stop()
 	syncDiskTk := time.NewTicker(time.Second * 5)
 	defer syncDiskTk.Stop()
-	needWatchNewFile := c.idxFp != nil
 	for {
 		if c.nextIdxCursor < c.msgNum {
-			if err = c.consumeBatch(); err != nil {
+			if err := c.consumeBatch(); err != nil {
 				util.Logger.Error(context.Background(), err)
 			}
 			continue
@@ -110,9 +102,6 @@ func (c *Consumer) Start() error {
 		}
 
 		if needSwitchNewFile {
-			if c.idxFp != nil {
-				_ = fileWatcher.Remove(c.idxFp.Name())
-			}
 			for {
 				if err = c.switchNextSeqFile(); err != nil {
 					if err != errSeqNotFound {
@@ -122,45 +111,18 @@ func (c *Consumer) Start() error {
 					continue
 				}
 
-				needWatchNewFile = true
 				break
 			}
-		}
-
-		if needWatchNewFile {
-			util.Logger.Debug(nil, "watched new index file:"+c.idxFp.Name())
-			if err = fileWatcher.Add(c.idxFp.Name()); err != nil {
-				util.Logger.Error(nil, err)
-				time.Sleep(time.Second)
-				continue
-			}
-
-			needWatchNewFile = false
-			if err = c.refreshMsgNum(); err != nil {
-				util.Logger.Error(nil, err)
-			}
-			continue
 		}
 
 		util.Logger.Debug(nil, "loop into select")
 		select {
-		case <-directlyTrySwitchFileTk.C:
+		case <-c.watchNewLogCh:
+			if err = c.refreshMsgNum(); err != nil {
+				util.Logger.Error(nil, err)
+			}
 		case <-syncDiskTk.C:
 			c.finishRec.syncDisk()
-		case event := <-fileWatcher.Events:
-			util.Logger.Debug(nil, "watch file changed")
-			if event.Has(fsnotify.Chmod) {
-				break
-			}
-
-			if event.Has(fsnotify.Remove) || event.Has(fsnotify.Rename) {
-				needSwitchNewFile = true
-				break
-			}
-
-			if err = c.refreshMsgNum(); err != nil {
-				util.Logger.Debug(nil, err)
-			}
 		case <-c.unsubscribeSignCh:
 			util.Logger.Debug(nil, "unwatched")
 			c.status = runStateExited
@@ -198,7 +160,7 @@ func (c *Consumer) SyncRemoteReplicas(logItems []*ha.SyncMsgFileLogItem) (bool, 
 			return false, err
 		}
 
-		if nodeDesc.MaxSyncedLogId < c.finishRec.nOSeq+uint64(c.finishRec.idxNum)-1 {
+		if nodeDesc.MaxSyncedLogId < nodegrpha.MaxSyncedLogId || nodeDesc.TermOfMaxSyncedLog < nodegrpha.TermOfMaxSyncedLog {
 			continue
 		}
 
@@ -218,8 +180,9 @@ func (c *Consumer) SyncRemoteReplicas(logItems []*ha.SyncMsgFileLogItem) (bool, 
 			defer cancel()
 
 			_, err = ha.NewHAClient(conn).SyncRemoteReplica(ctx, &ha.SyncRemoteReplicaReq{
-				LogItems:        logItems,
-				LastSyncedLogId: c.finishRec.nOSeq + uint64(c.finishRec.idxNum) - 1,
+				LogItems:            logItems,
+				LastSyncedLogId:     nodegrpha.MaxSyncedLogId,
+				TermOfLastSyncedLog: nodegrpha.TermOfMaxSyncedLog,
 			})
 			if err != nil {
 				util.Logger.Warn(context.Background(), err)

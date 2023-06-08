@@ -227,7 +227,7 @@ func (o *output) write(msgList []*Msg) error {
 		}
 
 		if !firstMsg.logItem.IsSyncFromMaster {
-			if err := o.msgIdGen.incr(uint64(batchWriteIdxNum)); err != nil {
+			if err := o.msgIdGen.logUndo(); err != nil {
 				if err := o.undoData(); err != nil {
 					panic(err)
 				}
@@ -239,6 +239,41 @@ func (o *output) write(msgList []*Msg) error {
 				return err
 			}
 
+			if err := o.msgIdGen.incrWithoutUndoProtect(uint64(batchWriteIdxNum)); err != nil {
+				if err := o.undoData(); err != nil {
+					panic(err)
+				}
+
+				if err := o.undoIdx(); err != nil {
+					panic(err)
+				}
+
+				if err := o.msgIdGen.undo(); err != nil {
+					panic(err)
+				}
+
+				return err
+			}
+
+			if o.Writer.isRealTimeBackupMasterLogMeta {
+				err := o.Writer.BackupMasterLogMeta()
+				if err != nil {
+					if err := o.undoData(); err != nil {
+						panic(err)
+					}
+
+					if err := o.undoIdx(); err != nil {
+						panic(err)
+					}
+
+					if err := o.msgIdGen.undo(); err != nil {
+						panic(err)
+					}
+
+					return err
+				}
+			}
+
 			if err := o.clearDataUndo(); err != nil {
 				panic(err)
 			}
@@ -247,15 +282,8 @@ func (o *output) write(msgList []*Msg) error {
 				panic(err)
 			}
 
-			if o.Writer.isRealTimeBackupMasterLogMeta {
-				ok, err := o.Writer.BackupMasterLogMeta()
-				if err != nil {
-					return err
-				}
-
-				if ok {
-					return nodegrpha.ErrLostMaster
-				}
+			if err := o.msgIdGen.clearUndo(); err != nil {
+				panic(err)
 			}
 		} else {
 			if err := o.msgIdGen.logUndo(); err != nil {
@@ -270,7 +298,7 @@ func (o *output) write(msgList []*Msg) error {
 				return err
 			}
 
-			if err := o.msgIdGen.resetWithoutUndo(msgList[batchWriteIdxNum-1].logItem.LogId); err != nil {
+			if err := o.msgIdGen.resetWithoutUndoProtect(msgList[batchWriteIdxNum-1].logItem.LogId); err != nil {
 				if err := o.undoData(); err != nil {
 					panic(err)
 				}

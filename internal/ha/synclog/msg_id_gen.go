@@ -69,7 +69,7 @@ func (g *msgIdGen) reset(maxMsgId uint64) error {
 	return nil
 }
 
-func (g *msgIdGen) resetWithoutUndo(maxMsgId uint64) error {
+func (g *msgIdGen) resetWithoutUndoProtect(maxMsgId uint64) error {
 	g.curMaxMsgId = maxMsgId
 	binary.LittleEndian.PutUint16(g.buf[:bufBoundaryBytes], bufBoundaryBegin)
 	binary.LittleEndian.PutUint64(g.buf[bufBoundaryBytes:bufBoundaryBytes+8], g.curMaxMsgId)
@@ -87,6 +87,28 @@ func (g *msgIdGen) resetWithoutUndo(maxMsgId uint64) error {
 			break
 		}
 	}
+	return nil
+}
+
+func (g *msgIdGen) incrWithoutUndoProtect(incr uint64) error {
+	g.curMaxMsgId = g.curMaxMsgId + incr
+	binary.LittleEndian.PutUint16(g.buf[:bufBoundaryBytes], bufBoundaryBegin)
+	binary.LittleEndian.PutUint64(g.buf[bufBoundaryBytes:bufBoundaryBytes+8], g.curMaxMsgId)
+	binary.LittleEndian.PutUint16(g.buf[bufBoundaryEnd:], bufBoundaryEnd)
+	var total int
+	for {
+		n, err := g.fp.WriteAt(g.buf[total:], int64(total))
+		if err != nil {
+			return err
+		}
+
+		total += n
+
+		if total >= msgIdGenBytes {
+			break
+		}
+	}
+
 	return nil
 }
 

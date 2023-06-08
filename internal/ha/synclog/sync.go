@@ -20,47 +20,51 @@ type Sync struct {
 	baseDir string
 }
 
-func (s *Sync) BackupMasterLogMeta() (bool, error) {
+func (s *Sync) BackupMasterLogMeta() error {
+	if !s.needBackupMasterLogMeta.Load() {
+		return nil
+	}
+
 	meta, err := nodegrpha.GetNodeGrpHAMeta(s.etcdCli)
 	if err != nil {
-		return false, err
+		return err
 	}
+
+	defer func() {
+		s.needBackupMasterLogMeta.Store(false)
+	}()
 
 	meta.MaxSyncLogId = s.Writer.output.msgIdGen.curMaxMsgId
 	meta.TermOfMaxSyncLog = nodegrpha.GetCurElectTerm()
 
-	succ, err := nodegrpha.SaveNodeGrpHAMetaByMasterRole(s.etcdCli, meta)
+	err = nodegrpha.SaveNodeGrpHAMetaByMasterRole(s.etcdCli, meta)
 	if err != nil {
-		return false, err
-	}
-
-	if !succ {
-		return false, nil
+		return err
 	}
 
 	nodegrpha.MaxSyncedLogId = meta.MaxSyncLogId
 	nodegrpha.TermOfMaxSyncedLog = meta.TermOfMaxSyncLog
 	nodegrpha.LastSyncedLogAt = uint32(time.Now().Unix())
 
-	unlock, err := util.DistributeLockNodeGrpForUpdateDiscovery(s.etcdCli)
+	unlock, err := util.DistributeLockForUpdateDiscovery(s.etcdCli)
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	defer unlock()
 
 	node, exist, err := util.DiscoverMyNode(s.Discovery)
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	if !exist {
-		return false, nil
+		return nodegrpha.ErrMasterNodeNotFound
 	}
 
 	var nodeDesc ha.Node
 	if err = json.Unmarshal([]byte(node.Extra), &nodeDesc); err != nil {
-		return false, err
+		return err
 	}
 
 	nodeDesc.MaxSyncedLogId = meta.MaxSyncLogId
@@ -68,15 +72,15 @@ func (s *Sync) BackupMasterLogMeta() (bool, error) {
 
 	nodeDescJ, err := json.Marshal(nodeDesc)
 	if err != nil {
-		return false, err
+		return err
 	}
 
 	node.Extra = string(nodeDescJ)
 	if err = s.Discovery.Register(context.Background(), discover.SrvNameBroker, node); err != nil {
-		return false, err
+		return err
 	}
 
-	return true, nil
+	return nil
 }
 
 func NewSync(baseDir string, etcdCli *clientv3.Client) (*Sync, error) {

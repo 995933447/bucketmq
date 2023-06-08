@@ -2,16 +2,13 @@ package mgr
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"github.com/995933447/autoelectv2"
 	"github.com/995933447/autoelectv2/factory"
 	nodegrpha "github.com/995933447/bucketmq/internal/ha"
 	"github.com/995933447/bucketmq/internal/ha/synclog"
-	"github.com/995933447/bucketmq/internal/syscfg"
 	"github.com/995933447/bucketmq/internal/util"
-	"github.com/995933447/bucketmq/pkg/discover"
 	"github.com/995933447/bucketmq/pkg/rpc/ha"
-	"github.com/995933447/gonetutil"
 	"github.com/995933447/microgosuit/discovery"
 	"github.com/995933447/microgosuit/grpcsuit"
 	clientv3 "go.etcd.io/etcd/client/v3"
@@ -64,41 +61,47 @@ func (h *HA) init() {
 				continue
 			}
 
-			unlock, err := util.DistributeLockNodeGrpForUpdateDiscovery(h.etcdCli)
+			//unlock, err := util.DistributeLockNodeGrpForUpdateDiscovery(h.etcdCli)
+			//if err != nil {
+			//	util.Logger.Error(nil, err)
+			//	continue
+			//}
+			//
+			//brokerCfg, err := h.Discovery.Discover(context.Background(), discover.SrvNameBroker)
+			//if err != nil {
+			//	unlock()
+			//	util.Logger.Error(nil, err)
+			//	continue
+			//}
+			//
+			//var masterNode *discovery.Node
+			//for _, node := range brokerCfg.Nodes {
+			//	var nodeDesc ha.Node
+			//	err = json.Unmarshal([]byte(node.Extra), &nodeDesc)
+			//	if err != nil {
+			//		unlock()
+			//		util.Logger.Error(nil, err)
+			//		continue
+			//	}
+			//
+			//	if nodeDesc.IsMaster {
+			//		break
+			//	}
+			//}
+			//
+			//unlock()
+			//
+			//if masterNode == nil {
+			//	continue
+			//}
+
+			materNode, err := nodegrpha.GetNodeGrpMasterDiscover(h.etcdCli)
 			if err != nil {
 				util.Logger.Error(nil, err)
 				continue
 			}
 
-			brokerCfg, err := h.Discovery.Discover(context.Background(), discover.SrvNameBroker)
-			if err != nil {
-				unlock()
-				util.Logger.Error(nil, err)
-				continue
-			}
-
-			var masterNode *discovery.Node
-			for _, node := range brokerCfg.Nodes {
-				var nodeDesc ha.Node
-				err = json.Unmarshal([]byte(node.Extra), &nodeDesc)
-				if err != nil {
-					unlock()
-					util.Logger.Error(nil, err)
-					continue
-				}
-
-				if nodeDesc.IsMaster {
-					break
-				}
-			}
-
-			unlock()
-
-			if masterNode == nil {
-				continue
-			}
-
-			conn, err := grpc.Dial(discover.GetGrpcResolveSchema(syscfg.MustCfg().Cluster)+":///"+discover.SrvNameBroker, grpcsuit.NotRoundRobinDialOpts...)
+			conn, err := grpc.Dial(fmt.Sprintf("%s:%d", materNode.Host, materNode.Port), grpcsuit.NotRoundRobinDialOpts...)
 			if err != nil {
 				util.Logger.Error(nil, err)
 				continue
@@ -160,75 +163,32 @@ func (h *HA) Elect() (err error) {
 		nodegrpha.NodeGrpMasterElectEtcdKeyCreateVersion = resp.Kvs[0].CreateRevision
 
 		meta.ElectTerm++
-		succ, err := nodegrpha.SaveNodeGrpHAMetaByMasterRole(h.etcdCli, meta)
+		err = nodegrpha.SaveNodeGrpHAMetaByMasterRole(h.etcdCli, meta)
 		if err != nil {
 			util.Logger.Error(nil, err)
-			return false
-		}
-
-		if !succ {
 			return false
 		}
 
 		nodegrpha.SwitchMasterRole(meta.ElectTerm)
 
+		myNode, exist, err := util.DiscoverMyNode(h.Discovery)
+		if err != nil {
+			util.Logger.Error(nil, err)
+			return false
+		}
+
+		if !exist {
+			util.Logger.Warn(nil, "my node not found")
+			return false
+		}
+
+		err = nodegrpha.SaveNodeGrpMasterDiscover(h.etcdCli, myNode)
+		if err != nil {
+			util.Logger.Error(nil, err)
+			return false
+		}
+
 		h.topicMgr.Start()
-
-		unlock, err := util.DistributeLockNodeGrpForUpdateDiscovery(h.etcdCli)
-		if err != nil {
-			return false
-		}
-
-		defer unlock()
-
-		if ok, err := nodegrpha.RefreshIsMasterRole(h.etcdCli); err != nil {
-			util.Logger.Error(nil, err)
-			return false
-		} else if !ok {
-			return false
-		}
-
-		brokerCfg, err := h.Discovery.Discover(context.Background(), discover.SrvNameBroker)
-		if err != nil {
-			util.Logger.Error(nil, err)
-			return false
-		}
-
-		sysCfg := syscfg.MustCfg()
-		curHost, err := gonetutil.EvalVarToParseIp(sysCfg.Host)
-		if err != nil {
-			util.Logger.Error(nil, err)
-			return false
-		}
-
-		for _, node := range brokerCfg.Nodes {
-			var nodeDesc ha.Node
-			err = json.Unmarshal([]byte(node.Extra), &nodeDesc)
-			if err != nil {
-				util.Logger.Error(nil, err)
-				return false
-			}
-
-			nodeDesc.IsMaster = false
-
-			if node.Host == curHost && node.Port == sysCfg.Port2 {
-				nodeDesc.IsMaster = true
-			}
-
-			nodeDescJ, err := json.Marshal(nodeDesc)
-			if err != nil {
-				util.Logger.Error(nil, err)
-				return false
-			}
-
-			node.Extra = string(nodeDescJ)
-
-			err = h.Discovery.Register(context.Background(), discover.SrvNameBroker, node)
-			if err != nil {
-				util.Logger.Error(nil, err)
-				return false
-			}
-		}
 
 		for {
 			ok, err := nodegrpha.RefreshIsMasterRole(h.etcdCli)

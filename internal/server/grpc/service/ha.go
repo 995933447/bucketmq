@@ -156,12 +156,7 @@ func (h *HA) PullRemoteReplica(_ context.Context, req *ha.PullRemoteReplicaReq) 
 			return nil, err
 		}
 
-		isMaster, err = nodegrpha.RefreshIsMasterRole(h.etcdCli)
-		if err != nil {
-			return nil, err
-		}
-
-		if !isMaster {
+		if item.LogId > nodegrpha.MaxSyncedLogId && item.Term >= nodegrpha.TermOfMaxSyncedLog {
 			return &resp, nil
 		}
 
@@ -201,7 +196,7 @@ func (h *HA) SyncRemoteReplica(ctx context.Context, req *ha.SyncRemoteReplicaReq
 			return
 		}
 
-		unlock, err := util.DistributeLockNodeGrpForUpdateDiscovery(h.etcdCli)
+		unlock, err := util.DistributeLockForUpdateDiscovery(h.etcdCli)
 		if err != nil {
 			util.Logger.Error(nil, err)
 			return
