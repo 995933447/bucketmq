@@ -36,7 +36,6 @@ type HA struct {
 	topicMgr  *TopicMgr
 	etcdCli   *clientv3.Client
 	elect     autoelectv2.AutoElection
-	hAGRPC    ha.HAClient
 	hAService ha.HAServer
 }
 

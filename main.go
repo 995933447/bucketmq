@@ -68,7 +68,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if err = initHALogSync(hALogSync); err != nil {
+	if err = regHALogSync(hALogSync); err != nil {
 		panic(err)
 	}
 
@@ -170,7 +170,7 @@ func main() {
 	}
 }
 
-func initHALogSync(hALogSync *synclog.Sync) error {
+func regHALogSync(hALogSync *synclog.Sync) error {
 	engine.LogMsgFileOp = func(fileName string, buf []byte, fileOffset uint32, extra *engine.OutputExtra) error {
 		var syncMsgLogItem *ha.SyncMsgFileLogItem
 
