@@ -7,7 +7,7 @@ require (
 	github.com/995933447/confloader v0.0.0-20230314141707-e7b191386ae2
 	github.com/995933447/gonetutil v0.0.0-20230517070832-763d0c3b1d7e
 	github.com/995933447/log-go v0.0.0-20230420123341-5d684963433b
-	github.com/995933447/microgosuit v0.0.0-20230518123133-ef190ad0e47b
+	github.com/995933447/microgosuit v0.0.0-20230608062829-012fba941f33
 	github.com/995933447/runtimeutil v0.0.0-20230427124214-00d5b30c3fd6
 	github.com/995933447/std-go v0.0.0-20220806175833-ab3496c0b696
 	github.com/fsnotify/fsnotify v1.6.0
