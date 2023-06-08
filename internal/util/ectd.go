@@ -54,8 +54,7 @@ func DistributeLockForUpdateDiscovery(etcdCli *clientv3.Client) (func(), error) 
 		return nil, err
 	}
 
-	sysCfg := syscfg.MustCfg()
-	muCli := concurrency.NewMutex(concurSess, fmt.Sprintf("bucketMQ_%s", sysCfg.Cluster))
+	muCli := concurrency.NewMutex(concurSess, fmt.Sprintf("bucketMQ_%s", syscfg.MustCfg().Cluster))
 
 	if err = muCli.Lock(context.Background()); err != nil {
 		return nil, err

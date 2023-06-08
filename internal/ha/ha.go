@@ -23,9 +23,9 @@ var (
 )
 
 const (
-	NodeGrpHAMetaEtcdKeyPrefix         = "bucketMQ_nodeGrp_meta_"
-	NodeGrpElectEtcdKeyPrefix          = "bucketMQ_nodeGrp_elect_"
-	NodeGrpMasterDiscoverEtcdKeyPrefix = "bucketMQ_nodeGrp_elect_"
+	NodeGrpHAMetaEtcdKeyPrefix          = "bucketMQ_nodeGrp_meta_"
+	NodeGrpElectEtcdKeyPrefix           = "bucketMQ_nodeGrp_elect_"
+	NodeGrpMasterDiscoveryEtcdKeyPrefix = "bucketMQ_nodeGrp_elect_"
 )
 
 var MeAsMasterDiscoverEtcdLeaseCancelFunc context.CancelFunc
@@ -42,10 +42,10 @@ type NodeHAMeta struct {
 }
 
 func GetNodeGrpMasterNodeEtcdKey() string {
-	return NodeGrpMasterDiscoverEtcdKeyPrefix + syscfg.MustCfg().Cluster + "_" + syscfg.MustCfg().NodeGrp
+	return NodeGrpMasterDiscoveryEtcdKeyPrefix + syscfg.MustCfg().Cluster + "_" + syscfg.MustCfg().NodeGrp
 }
 
-func SaveNodeGrpMasterDiscover(etcdCli *clientv3.Client, node *discovery.Node) error {
+func SaveNodeGrpMasterDiscovery(etcdCli *clientv3.Client, node *discovery.Node) error {
 	nodeJ, err := json.Marshal(node)
 	if err != nil {
 		util.Logger.Error(nil, err)
@@ -88,7 +88,7 @@ func SaveNodeGrpMasterDiscover(etcdCli *clientv3.Client, node *discovery.Node) e
 	return nil
 }
 
-func GetNodeGrpMasterDiscover(etcdCli *clientv3.Client) (*discovery.Node, error) {
+func GetNodeGrpMasterDiscovery(etcdCli *clientv3.Client) (*discovery.Node, error) {
 	getResp, err := etcdCli.Get(context.Background(), GetNodeGrpMasterNodeEtcdKey())
 	if err != nil {
 		util.Logger.Error(nil, err)

@@ -60,7 +60,7 @@ func (h *HA) init() {
 				continue
 			}
 
-			materNode, err := nodegrpha.GetNodeGrpMasterDiscover(h.etcdCli)
+			materNode, err := nodegrpha.GetNodeGrpMasterDiscovery(h.etcdCli)
 			if err != nil {
 				util.Logger.Error(nil, err)
 				continue
@@ -147,7 +147,7 @@ func (h *HA) Elect() (err error) {
 			return false
 		}
 
-		err = nodegrpha.SaveNodeGrpMasterDiscover(h.etcdCli, myNode)
+		err = nodegrpha.SaveNodeGrpMasterDiscovery(h.etcdCli, myNode)
 		if err != nil {
 			util.Logger.Error(nil, err)
 			return false
