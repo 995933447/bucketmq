@@ -6,7 +6,8 @@ import (
 	"github.com/995933447/bucketmq/pkg/rpc/consumer"
 	consumerrpc "github.com/995933447/bucketmq/pkg/rpc/consumer"
 	"github.com/995933447/bucketmq/pkg/rpc/errs"
-	"github.com/995933447/bucketmq/pkg/rpc/health"
+	"github.com/995933447/microgosuit/grpcsuit/handler/health"
+
 	snrpcx "github.com/995933447/bucketmq/pkg/rpc/snrpc"
 	"github.com/golang/protobuf/proto"
 	"math/rand"
