@@ -2,7 +2,7 @@ package syscfg
 
 import (
 	"github.com/995933447/confloader"
-	"github.com/gzjjyz/micro/env"
+	"github.com/995933447/microgosuit/env"
 	"sync"
 	"time"
 )
