@@ -31,15 +31,12 @@ func Init(cfgFilePath string) error {
 		return nil
 	}
 
-	if cfg != nil {
-		return nil
-	}
-
 	if cfgFilePath == "" {
 		cfgFilePath = defaultCfgFilePath
 	}
 
 	var err error
+	cfg = new(Cfg)
 	cfgLoader := confloader.NewLoader(cfgFilePath, time.Second*10, cfg)
 	if err = cfgLoader.Load(); err != nil {
 		return err
