@@ -92,7 +92,7 @@ func (g *msgIdGen) Incr(incr uint64) error {
 
 	binary.LittleEndian.PutUint16(g.buf[:bufBoundaryBytes], bufBoundaryBegin)
 	binary.LittleEndian.PutUint64(g.buf[bufBoundaryBytes:bufBoundaryBytes+8], g.curMaxMsgId)
-	binary.LittleEndian.PutUint16(g.buf[bufBoundaryEnd:], bufBoundaryEnd)
+	binary.LittleEndian.PutUint16(g.buf[bufBoundaryBytes:], bufBoundaryEnd)
 	var total int
 	for {
 		n, err := g.fp.WriteAt(g.buf[total:], int64(total))
@@ -135,7 +135,7 @@ func (g *msgIdGen) Incr(incr uint64) error {
 func (g *msgIdGen) logUndo() error {
 	binary.LittleEndian.PutUint16(g.undoBuf[:bufBoundaryBytes], bufBoundaryBegin)
 	binary.LittleEndian.PutUint64(g.undoBuf[bufBoundaryBytes:bufBoundaryBytes+8], g.curMaxMsgId)
-	binary.LittleEndian.PutUint16(g.undoBuf[bufBoundaryEnd:], bufBoundaryEnd)
+	binary.LittleEndian.PutUint16(g.undoBuf[bufBoundaryBytes:], bufBoundaryEnd)
 	var total int
 	for {
 		n, err := g.undoFp.WriteAt(g.undoBuf[total:], int64(total))

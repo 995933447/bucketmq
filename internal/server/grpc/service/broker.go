@@ -11,8 +11,8 @@ import (
 	"github.com/995933447/bucketmq/pkg/rpc/broker"
 	"github.com/995933447/bucketmq/pkg/rpc/errs"
 	"github.com/995933447/bucketmq/pkg/rpc/ha"
-	"github.com/995933447/bucketmq/pkg/rpc/health"
 	"github.com/995933447/microgosuit/grpcsuit"
+	"github.com/995933447/microgosuit/grpcsuit/handler/health"
 	"google.golang.org/grpc"
 	"time"
 )
