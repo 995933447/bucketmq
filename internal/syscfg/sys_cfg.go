@@ -25,14 +25,11 @@ var (
 )
 
 func Init(cfgFilePath string) error {
-	initCfgMu.RLock()
-	if cfg != nil {
-		initCfgMu.RUnlock()
-		return nil
-	}
-
 	initCfgMu.Lock()
 	defer initCfgMu.Unlock()
+	if cfg != nil {
+		return nil
+	}
 
 	if cfg != nil {
 		return nil

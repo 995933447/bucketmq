@@ -161,7 +161,7 @@ func (b *bootMarker) logUndo() error {
 	binary.LittleEndian.PutUint32(b.undoBuf[bufBoundaryBytes:bufBoundaryBytes+4], b.bootId)
 	binary.LittleEndian.PutUint64(b.undoBuf[bufBoundaryBytes+4:bufBoundaryBytes+12], b.curSeq)
 	binary.LittleEndian.PutUint32(b.undoBuf[bufBoundaryBytes+12:bufBoundaryBytes+16], b.bootIdxOffset)
-	binary.LittleEndian.PutUint16(b.undoBuf[bufBoundaryEnd+16:], bufBoundaryEnd)
+	binary.LittleEndian.PutUint16(b.undoBuf[bufBoundaryBytes+16:], bufBoundaryEnd)
 	var total int
 	for {
 		n, err := b.undoFp.WriteAt(b.undoBuf[total:], int64(total))
