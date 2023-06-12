@@ -214,7 +214,7 @@ func NewWriter(sync *Sync) (*Writer, error) {
 	}
 
 	var err error
-	writer.etcdCli, err = util.GetOrNewEtcdCli()
+	writer.etcdCli, err = util.GetOrMakeEtcdCli()
 	if err != nil {
 		return nil, err
 	}

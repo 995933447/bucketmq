@@ -168,7 +168,7 @@ func (c *Consumer) RegSNRPCProto(srv *snrpc.Server) {
 		return &consumer.ConsumeResp{}, nil
 	})
 
-	srv.RegProto(uint32(snrpcx.SNRPCProto_SNRPCProtoConsume), &consumer.ConsumeReq{}, func(conn net.Conn, req proto.Message) (proto.Message, error) {
+	srv.RegProto(uint32(snrpcx.SNRPCProto_SNRPCProtoConsume), &consumer.ConsumeReq{}, func(_ net.Conn, req proto.Message) (proto.Message, error) {
 		return c.CallbackConsumer(req.(*consumer.ConsumeReq))
 	})
 }

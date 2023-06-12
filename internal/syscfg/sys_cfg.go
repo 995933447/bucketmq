@@ -7,21 +7,16 @@ import (
 	"time"
 )
 
-type EtcdCfg struct {
-	ConnectTimeoutMs int32    `json:"connect_timeout_ms"`
-	Endpoints        []string `json:"endpoints"`
-}
-
 type Cfg struct {
 	*env.Meta
-	DataDir           string
-	NodeGrp           string
-	Cluster           string
-	IdxFileMaxItemNum uint32
-	DataFileMaxSize   string
-	Host              string
-	Port              int
-	Port2             int
+	DataDir           string `json:"data_dir"`
+	NodeGrp           string `json:"node_grp"`
+	Cluster           string `json:"cluster"`
+	IdxFileMaxItemNum uint32 `json:"idx_file_max_item_num"`
+	DataFileMaxSize   string `json:"data_file_max_size"`
+	Host              string `json:"host"`
+	Port              int    `json:"port"`
+	Port2             int    `json:"port_2"`
 }
 
 var (

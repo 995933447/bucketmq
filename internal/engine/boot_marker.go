@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/binary"
+	"github.com/995933447/bucketmq/internal/util"
 	"io"
 	"os"
 	"time"
@@ -25,9 +26,11 @@ func newBootMarker(readerGrp *readerGrp) (*bootMarker, error) {
 	var err error
 	boot.fp, err = makeLoadBootFp(boot.readerGrp.Subscriber.baseDir, boot.readerGrp.Subscriber.topic, boot.readerGrp.Subscriber.name)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 	if err = boot.load(); err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 	return boot, nil
@@ -46,6 +49,7 @@ type bootMarker struct {
 func (b *bootMarker) load() error {
 	buf, err := io.ReadAll(b.fp)
 	if err != nil && err != io.EOF {
+		util.Logger.Error(nil, err)
 		return err
 	}
 
@@ -71,6 +75,7 @@ func (b *bootMarker) mark(bootId uint32, seq uint64, idxOffset uint32) error {
 	now := time.Now().Unix()
 
 	if err := b.logUndo(); err != nil {
+		util.Logger.Error(nil, err)
 		return err
 	}
 
@@ -85,6 +90,7 @@ func (b *bootMarker) mark(bootId uint32, seq uint64, idxOffset uint32) error {
 		n, err := b.fp.WriteAt(buf[total:], int64(total))
 		if err != nil {
 			if err := b.undo(); err != nil {
+				util.Logger.Error(nil, err)
 				panic(err)
 			}
 			return err
@@ -104,12 +110,14 @@ func (b *bootMarker) mark(bootId uint32, seq uint64, idxOffset uint32) error {
 	})
 	if err != nil {
 		if err := b.undo(); err != nil {
+			util.Logger.Error(nil, err)
 			panic(err)
 		}
 		return err
 	}
 
 	if err := b.clearUndo(); err != nil {
+		util.Logger.Error(nil, err)
 		panic(err)
 	}
 
@@ -129,6 +137,7 @@ func (b *bootMarker) undo() error {
 	for {
 		n, err := b.fp.WriteAt(b.undoBuf[total:], int64(total))
 		if err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 
@@ -140,6 +149,7 @@ func (b *bootMarker) undo() error {
 	}
 
 	if err := b.clearUndo(); err != nil {
+		util.Logger.Error(nil, err)
 		return err
 	}
 
@@ -156,6 +166,7 @@ func (b *bootMarker) logUndo() error {
 	for {
 		n, err := b.undoFp.WriteAt(b.undoBuf[total:], int64(total))
 		if err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 
@@ -170,7 +181,9 @@ func (b *bootMarker) logUndo() error {
 
 func (b *bootMarker) clearUndo() error {
 	if err := b.undoFp.Truncate(0); err != nil {
+		util.Logger.Warn(nil, err)
 		if err = os.Truncate(b.undoFp.Name(), 0); err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 	}

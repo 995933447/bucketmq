@@ -20,7 +20,7 @@ var (
 	etcdCli      *clientv3.Client
 )
 
-func GetOrNewEtcdCli() (*clientv3.Client, error) {
+func GetOrMakeEtcdCli() (*clientv3.Client, error) {
 	newEtcdCliMu.RLock()
 	if etcdCli != nil {
 		newEtcdCliMu.RUnlock()

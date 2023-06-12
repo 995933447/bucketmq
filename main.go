@@ -33,7 +33,7 @@ func main() {
 		panic(err)
 	}
 
-	etcdCli, err := util.GetOrNewEtcdCli()
+	etcdCli, err := util.GetOrMakeEtcdCli()
 	if err != nil {
 		panic(err)
 	}
@@ -94,6 +94,7 @@ func main() {
 					return err
 				}
 
+				var consumeErr error
 				for _, node := range brokerCfg.Nodes {
 					if node.Host == myHost && node.Port == sysCfg.Port {
 						continue
@@ -106,20 +107,28 @@ func main() {
 						return err
 					}
 
-					var consumeResp consumerrpc.ConsumeResp
+					var (
+						consumeResp consumerrpc.ConsumeResp
+					)
 					err = cli.Call(uint32(snrpcx.SNRPCProto_SNRPCProtoConsume), timeout, consumeReq, &consumeResp)
 					if err != nil {
 						if rpcErr, ok := errs.ToRPCErr(err); ok && rpcErr.Code == errs.ErrCode_ErrCodeConsumerNotFound {
 							continue
 						}
-						return err
+						consumeErr = err
+						continue
 					}
 
 					return nil
 				}
 
+				if consumeErr != nil {
+					return consumeErr
+				}
+
 				return errs.RPCErr(errs.ErrCode_ErrCodeConsumerNotFound, "")
 			}
+
 			return err
 		}
 		return nil

@@ -1,0 +1,14 @@
+{
+  "discovery": "etcd",
+  "etcd": {
+    "endpoints": ["127.0.0.1:2379"]
+  },
+  "data_dir": "/var/data/bucketmq",
+  "node_grp": "bucketmq_node_group1",
+  "cluster": "bucketmq",
+  "idx_file_max_item_num": 10000000,
+  "data_file_max_size": "1GB",
+  "host": "$inner_ip",
+  "port": 5001,
+  "port_2": 5002
+}

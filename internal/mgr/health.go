@@ -66,7 +66,7 @@ func (h *HealthChecker) Resume() {
 func (h *HealthChecker) Run() error {
 	sysCfg := syscfg.MustCfg()
 
-	etcdCli, err := util.GetOrNewEtcdCli()
+	etcdCli, err := util.GetOrMakeEtcdCli()
 	if err != nil {
 		return err
 	}

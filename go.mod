@@ -10,7 +10,6 @@ require (
 	github.com/995933447/microgosuit v0.0.0-20230608062829-012fba941f33
 	github.com/995933447/runtimeutil v0.0.0-20230427124214-00d5b30c3fd6
 	github.com/995933447/std-go v0.0.0-20220806175833-ab3496c0b696
-	github.com/fsnotify/fsnotify v1.6.0
 	github.com/golang/protobuf v1.5.3
 	github.com/golang/snappy v0.0.4
 	github.com/google/uuid v1.3.0

@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/binary"
+	"github.com/995933447/bucketmq/internal/util"
 	"io"
 	"os"
 	"time"
@@ -46,35 +47,42 @@ func newFinishRec(r *reader) (*finishRec, error) {
 	var err error
 	rec.idxFp, err = makeSeqIdxFp(r.reader.readerGrp.Subscriber.baseDir, r.reader.readerGrp.Subscriber.topic, r.seq, os.O_CREATE|os.O_RDONLY)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	rec.fp, err = makeFinishRcFp(r.reader.readerGrp.Subscriber.baseDir, r.reader.readerGrp.Subscriber.topic, r.reader.readerGrp.Subscriber.name, r.seq)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	rec.undoFp, err = makeFinishRcUndoFp(r.reader.readerGrp.Subscriber.baseDir, r.reader.readerGrp.Subscriber.topic, r.reader.readerGrp.Subscriber.name, r.seq)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	undoFileInfo, err := rec.undoFp.Stat()
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	if undoFileInfo.Size() > 0 {
 		n, err := rec.undoFp.ReadAt(rec.undoBuf[:], 0)
 		if err != nil && err != io.EOF {
+			util.Logger.Error(nil, err)
 			return nil, err
 		}
 
 		if n != idxUndoBytes {
+			util.Logger.Error(nil, errFileCorrupted)
 			return nil, errFileCorrupted
 		}
 
 		if err = rec.undo(); err != nil {
+			util.Logger.Error(nil, err)
 			return nil, err
 		}
 	}
@@ -107,12 +115,14 @@ func (r *finishRec) load() error {
 		n, err := r.fp.ReadAt(buf, cursor)
 		if err != nil {
 			if err != io.EOF {
+				util.Logger.Error(nil, err)
 				return err
 			}
 			isEOF = true
 		}
 
 		if n%finishIdxBufBytes > 0 {
+			util.Logger.Error(nil, errFileCorrupted)
 			return errFileCorrupted
 		}
 
@@ -125,6 +135,7 @@ func (r *finishRec) load() error {
 			boundaryBegin := bin.Uint16(buf[:bufBoundaryBytes])
 			boundaryEnd := bin.Uint16(buf[finishIdxBufBytes-bufBoundaryBytes:])
 			if boundaryBegin != bufBoundaryBegin || boundaryEnd != bufBoundaryEnd {
+				util.Logger.Error(nil, errFileCorrupted)
 				return errFileCorrupted
 			}
 
@@ -155,6 +166,7 @@ func (r *finishRec) confirm(confirmedList []*confirmedMsgIdx) error {
 	now := time.Now().Unix()
 
 	if err := r.logUndo(); err != nil {
+		util.Logger.Error(nil, err)
 		return err
 	}
 
@@ -173,7 +185,9 @@ func (r *finishRec) confirm(confirmedList []*confirmedMsgIdx) error {
 	}
 	_, err := r.fp.Write(r.buf[:])
 	if err != nil {
+		util.Logger.Error(nil, err)
 		if err := r.undo(); err != nil {
+			util.Logger.Error(nil, err)
 			panic(err)
 		}
 		return err
@@ -185,13 +199,16 @@ func (r *finishRec) confirm(confirmedList []*confirmedMsgIdx) error {
 		ContentCreatedAt: uint32(now),
 	})
 	if err != nil {
+		util.Logger.Error(nil, err)
 		if err := r.undo(); err != nil {
+			util.Logger.Error(nil, err)
 			panic(err)
 		}
 		return err
 	}
 
 	if err = r.clearUndo(); err != nil {
+		util.Logger.Error(nil, err)
 		panic(err)
 	}
 
@@ -205,13 +222,16 @@ func (r *finishRec) confirm(confirmedList []*confirmedMsgIdx) error {
 func (r *finishRec) undo() error {
 	origFileBytes := int64(binary.LittleEndian.Uint32(r.undoBuf[bufBoundaryBytes:bufBoundaryBytes+idxOffsetInFinishIdxBufBytes]) * finishIdxBufBytes)
 	if err := r.fp.Truncate(origFileBytes); err != nil {
+		util.Logger.Warn(nil, err)
 		if err = os.Truncate(r.fp.Name(), origFileBytes); err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 		return err
 	}
 
 	if err := r.clearUndo(); err != nil {
+		util.Logger.Error(nil, err)
 		return err
 	}
 
@@ -226,6 +246,7 @@ func (r *finishRec) logUndo() error {
 	for {
 		n, err := r.undoFp.WriteAt(r.undoBuf[:total], int64(total))
 		if err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 
@@ -242,6 +263,7 @@ func (r *finishRec) logUndo() error {
 func (r *finishRec) clearUndo() error {
 	if err := r.undoFp.Truncate(0); err != nil {
 		if err = os.Truncate(r.undoFp.Name(), 0); err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 		return err
@@ -252,6 +274,7 @@ func (r *finishRec) clearUndo() error {
 func (r *finishRec) isFinished() (bool, error) {
 	idxFpState, err := r.idxFp.Stat()
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return false, err
 	}
 

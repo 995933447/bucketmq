@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"github.com/995933447/bucketmq/internal/util"
 	"github.com/995933447/bucketmq/pkg/discover"
 	"github.com/995933447/bucketmq/pkg/rpc/broker"
 	"github.com/995933447/bucketmq/pkg/rpc/snrpc"
@@ -21,11 +22,13 @@ func NewBucketMQ(cluster string, etcdCfg *clientv3.Config) (*Cli, error) {
 	var err error
 	cli.discovery, err = etcd.NewDiscovery(discover.GetDiscoverNamePrefix(cluster), time.Second*5, *etcdCfg)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	conn, err := grpc.Dial(discover.GetGrpcResolveSchema(cluster)+":///"+discover.SrvNameBroker, grpcsuit.RoundRobinDialOpts...)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 

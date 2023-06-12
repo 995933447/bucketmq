@@ -1,11 +1,3 @@
-github.com/995933447/autoelectv2 v0.0.0-20230519044713-8420af506661 h1:Pmzl7p0IcPpGXeQvhaEBkar2yfwoQSK9Vbj9lLwRqcA=
-github.com/995933447/autoelectv2 v0.0.0-20230519044713-8420af506661/go.mod h1:smbZw5q6eIH7isEzoaZ7NKplZ9nniqrPW0Zwo58EV6g=
-github.com/995933447/autoelectv2 v0.0.0-20230530093650-e9a004ed5b0f h1:pQ4z7lugcBWlNkwZ3ggLo3dqUcGDiS6C4VhIxfckdl8=
-github.com/995933447/autoelectv2 v0.0.0-20230530093650-e9a004ed5b0f/go.mod h1:smbZw5q6eIH7isEzoaZ7NKplZ9nniqrPW0Zwo58EV6g=
-github.com/995933447/autoelectv2 v0.0.0-20230531090610-587170952567 h1:BP7Jj0UxwnX61pxfKhJfclSOi4Rt28fvtdtB4Vd6H8I=
-github.com/995933447/autoelectv2 v0.0.0-20230531090610-587170952567/go.mod h1:smbZw5q6eIH7isEzoaZ7NKplZ9nniqrPW0Zwo58EV6g=
-github.com/995933447/autoelectv2 v0.0.0-20230531095950-e3e840d58565 h1:+hHgcdSVs0NEtjEYsq4Sl41hBa3ZzeqRwTS7MRDW+Lg=
-github.com/995933447/autoelectv2 v0.0.0-20230531095950-e3e840d58565/go.mod h1:smbZw5q6eIH7isEzoaZ7NKplZ9nniqrPW0Zwo58EV6g=
 github.com/995933447/autoelectv2 v0.0.0-20230601052541-35b54c9d5daa h1:JI7dL++elxkWvruBWp6Xqk+1/BdylfNnllOTnvvn9rQ=
 github.com/995933447/autoelectv2 v0.0.0-20230601052541-35b54c9d5daa/go.mod h1:smbZw5q6eIH7isEzoaZ7NKplZ9nniqrPW0Zwo58EV6g=
 github.com/995933447/confloader v0.0.0-20230314141707-e7b191386ae2 h1:lElTU+vnP6+DR9W6kGbnHXL45zJsXFsWtvYt6bForCA=
@@ -16,8 +8,6 @@ github.com/995933447/gonetutil v0.0.0-20230517070832-763d0c3b1d7e h1:duIkST4HSqn
 github.com/995933447/gonetutil v0.0.0-20230517070832-763d0c3b1d7e/go.mod h1:ohT95zFKbutdw7BviBXkma82eZthx4tV6LXSexLQ3h4=
 github.com/995933447/log-go v0.0.0-20230420123341-5d684963433b h1:mMs9jXdhcSpesQpg4S7pFpBGG2cYvF6xcCyqdjbQmI4=
 github.com/995933447/log-go v0.0.0-20230420123341-5d684963433b/go.mod h1:8nYLjLQ598TrCziO2tAADhEFlNxySV+9phaQBzCaSZo=
-github.com/995933447/microgosuit v0.0.0-20230518123133-ef190ad0e47b h1:+QK9ijqTnnLrLNkIC5XQi1nmVeS4v0k/lAsU1Vjs0R0=
-github.com/995933447/microgosuit v0.0.0-20230518123133-ef190ad0e47b/go.mod h1:qS5yPkffYFnfFjPy/cZBurIVMX7B6TpI9caIvdnP/Mc=
 github.com/995933447/microgosuit v0.0.0-20230608062829-012fba941f33 h1:FCtJ9Gzo4vUd6aMF2vzfFAEa0BYPKbutwnT+ADCmLYE=
 github.com/995933447/microgosuit v0.0.0-20230608062829-012fba941f33/go.mod h1:qS5yPkffYFnfFjPy/cZBurIVMX7B6TpI9caIvdnP/Mc=
 github.com/995933447/runtimeutil v0.0.0-20230427124214-00d5b30c3fd6 h1:LcqGvldZ2jZ5f5b8ASMdwycQfAUPWnfaOj4TXxaZEXE=
@@ -38,8 +28,6 @@ github.com/coreos/go-systemd/v22 v22.3.2/go.mod h1:Y58oyj3AT4RCenI/lSvhwexgC+NSV
 github.com/davecgh/go-spew v1.1.0/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
 github.com/davecgh/go-spew v1.1.1 h1:vj9j/u1bqnvCEfJOwUhtlOARqs3+rkHYY13jYWTU97c=
 github.com/davecgh/go-spew v1.1.1/go.mod h1:J7Y8YcW2NihsgmVo/mv3lAwl/skON4iLHjSsI+c5H38=
-github.com/fsnotify/fsnotify v1.6.0 h1:n+5WquG0fcWoWp6xPWfHdbskMCQaFnG6PfBrh1Ky4HY=
-github.com/fsnotify/fsnotify v1.6.0/go.mod h1:sl3t1tCWJFWoRz9R8WJCbQihKKwmorjAbSClcnxKAGw=
 github.com/godbus/dbus/v5 v5.0.4/go.mod h1:xhWf0FNVPg57R7Z0UbKHbJfkEywrmjJnf7w5xrFpKfA=
 github.com/gogo/protobuf v1.3.2 h1:Ov1cvc58UF3b5XjBnZv7+opcTcQFZebYjWzi34vdm4Q=
 github.com/gogo/protobuf v1.3.2/go.mod h1:P1XiOD3dCwIKUDQYPy72D8LYyHL2YPYrpS2s69NZV8Q=
@@ -115,7 +103,6 @@ golang.org/x/sync v0.0.0-20201020160332-67f06af15bc9/go.mod h1:RxMgew5VJxzue5/jJ
 golang.org/x/sys v0.0.0-20190215142949-d0b11bdaac8a/go.mod h1:STP8DvDyc/dI5b8T5hshtkjS+E42TnysNCUPdjciGhY=
 golang.org/x/sys v0.0.0-20190412213103-97732733099d/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
 golang.org/x/sys v0.0.0-20200930185726-fdedc70b468f/go.mod h1:h1NjWce9XRLGQEsW7wpKNCjG9DtNlClVuFLEZdDNbEs=
-golang.org/x/sys v0.0.0-20220908164124-27713097b956/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
 golang.org/x/sys v0.7.0 h1:3jlCCIQZPdOYu1h8BkNvLz8Kgwtae2cagcG/VamtZRU=
 golang.org/x/sys v0.7.0/go.mod h1:oPkhp1MJrh7nUepCBck5+mAzfO9JrbApNNgaTdGDITg=
 golang.org/x/text v0.3.0/go.mod h1:NqM8EUOU14njkJ3fqMW+pc6Ldnwhi/IjpwHt7yyuwOQ=
