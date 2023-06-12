@@ -13,7 +13,6 @@ require (
 	github.com/golang/protobuf v1.5.3
 	github.com/golang/snappy v0.0.4
 	github.com/google/uuid v1.3.0
-	github.com/gzjjyz/micro v0.0.2
 	github.com/huandu/skiplist v1.2.0
 	go.etcd.io/etcd/client/v3 v3.5.9
 	golang.org/x/net v0.9.0

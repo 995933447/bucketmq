@@ -2,6 +2,7 @@ package engine
 
 import (
 	"fmt"
+	"github.com/995933447/bucketmq/internal/util"
 	"os"
 	"strconv"
 	"strings"
@@ -59,6 +60,7 @@ func GetSubscriberFileDir(baseDir, topic, subscriber string) string {
 func mkdirIfNotExist(dir string) error {
 	if _, err := os.Stat(dir); err != nil {
 		if !os.IsNotExist(err) {
+			util.Logger.Error(nil, err)
 			return err
 		}
 
@@ -77,6 +79,7 @@ func makeIdxUndoFp(baseDir, topic string) (*os.File, error) {
 
 	files, err := os.ReadDir(dir)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
@@ -94,11 +97,13 @@ func makeIdxUndoFp(baseDir, topic string) (*os.File, error) {
 func makeSeqIdxFp(baseDir, topic string, seq uint64, flag int) (*os.File, error) {
 	dir := GetTopicFileDir(baseDir, topic)
 	if err := mkdirIfNotExist(dir); err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	files, err := os.ReadDir(dir)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
@@ -117,6 +122,7 @@ func makeSeqIdxFp(baseDir, topic string, seq uint64, flag int) (*os.File, error)
 			var err error
 			curSeq, err = strconv.ParseUint(seqStr, 10, 64)
 			if err != nil {
+				util.Logger.Error(nil, err)
 				return nil, err
 			}
 		}
@@ -134,11 +140,13 @@ func makeSeqIdxFp(baseDir, topic string, seq uint64, flag int) (*os.File, error)
 func makeSeqDataFp(baseDir, topic string, seq uint64, flag int) (*os.File, error) {
 	dir := GetTopicFileDir(baseDir, topic)
 	if err := mkdirIfNotExist(dir); err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	files, err := os.ReadDir(dir)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
@@ -158,6 +166,7 @@ func makeSeqDataFp(baseDir, topic string, seq uint64, flag int) (*os.File, error
 
 		curSeq, err := strconv.ParseUint(seqStr, 10, 64)
 		if err != nil {
+			util.Logger.Error(nil, err)
 			return nil, err
 		}
 
@@ -174,11 +183,13 @@ func makeSeqDataFp(baseDir, topic string, seq uint64, flag int) (*os.File, error
 func makeDataUndoFp(baseDir, topic string) (*os.File, error) {
 	dir := GetTopicFileDir(baseDir, topic)
 	if err := mkdirIfNotExist(dir); err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	files, err := os.ReadDir(dir)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
@@ -197,11 +208,13 @@ func makeLoadBootFp(baseDir, topic, subscriber string) (*os.File, error) {
 	dir := GetSubscriberFileDir(baseDir, topic, subscriber)
 
 	if err := mkdirIfNotExist(dir); err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	files, err := os.ReadDir(dir)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
@@ -212,6 +225,7 @@ func makeLoadBootFp(baseDir, topic, subscriber string) (*os.File, error) {
 
 		fp, err := os.OpenFile(dir+"/"+file.Name(), os.O_RDWR, os.ModePerm)
 		if err != nil {
+			util.Logger.Error(nil, err)
 			return nil, err
 		}
 
@@ -381,6 +395,7 @@ func makeFinishRcUndoFp(baseDir, topic, subscriber string, seq uint64) (*os.File
 
 		curSeq, err := strconv.ParseUint(seqStr, 10, 64)
 		if err != nil {
+			util.Logger.Error(nil, err)
 			return nil, err
 		}
 
@@ -390,6 +405,7 @@ func makeFinishRcUndoFp(baseDir, topic, subscriber string, seq uint64) (*os.File
 
 		fp, err := os.OpenFile(dir+"/"+file.Name(), os.O_RDWR|os.O_APPEND, os.ModePerm)
 		if err != nil {
+			util.Logger.Error(nil, err)
 			return nil, err
 		}
 
@@ -403,11 +419,13 @@ func scanDirToParseOldestSeq(baseDir, topic string) (uint64, error) {
 	dir := GetTopicFileDir(baseDir, topic)
 
 	if err := mkdirIfNotExist(dir); err != nil {
+		util.Logger.Error(nil, err)
 		return 0, err
 	}
 
 	files, err := os.ReadDir(dir)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return 0, err
 	}
 
@@ -420,6 +438,7 @@ func scanDirToParseOldestSeq(baseDir, topic string) (uint64, error) {
 
 		curSeq, err := strconv.ParseUint(seqStr, 10, 64)
 		if err != nil {
+			util.Logger.Error(nil, err)
 			return 0, err
 		}
 
@@ -435,11 +454,13 @@ func scanDirToParseNewestSeq(baseDir, topic string) (uint64, error) {
 	dir := GetTopicFileDir(baseDir, topic)
 
 	if err := mkdirIfNotExist(dir); err != nil {
+		util.Logger.Error(nil, err)
 		return 0, err
 	}
 
 	files, err := os.ReadDir(dir)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return 0, err
 	}
 
@@ -454,6 +475,7 @@ func scanDirToParseNewestSeq(baseDir, topic string) (uint64, error) {
 		if seqStr != "" {
 			curSeq, err = strconv.ParseUint(seqStr, 10, 64)
 			if err != nil {
+				util.Logger.Error(nil, err)
 				return 0, err
 			}
 		}
@@ -470,6 +492,7 @@ func scanDirToParseNextSeq(baseDir, topic string, seq uint64) (uint64, error) {
 	dir := GetTopicFileDir(baseDir, topic)
 
 	if err := mkdirIfNotExist(dir); err != nil {
+		util.Logger.Error(nil, err)
 		return 0, err
 	}
 
@@ -495,6 +518,7 @@ func scanDirToParseNextSeq(baseDir, topic string, seq uint64) (uint64, error) {
 
 		curSeq, err := strconv.ParseUint(seqStr, 10, 64)
 		if err != nil {
+			util.Logger.Error(nil, err)
 			return 0, err
 		}
 
@@ -513,6 +537,7 @@ func scanDirToParseNextSeq(baseDir, topic string, seq uint64) (uint64, error) {
 	}
 
 	if nextSeq == 0 {
+		util.Logger.Error(nil, errSeqNotFound)
 		return 0, errSeqNotFound
 	}
 

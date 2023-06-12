@@ -42,16 +42,19 @@ func newReader(rg *readerGrp, seq uint64) (*reader, error) {
 	var err error
 	r.finishRec, err = newFinishRec(r)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	r.idxFp, err = makeSeqIdxFp(r.readerGrp.Subscriber.baseDir, r.readerGrp.Subscriber.topic, seq, os.O_CREATE|os.O_RDONLY)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	r.idxFp, err = makeSeqDataFp(r.readerGrp.Subscriber.baseDir, r.readerGrp.Subscriber.topic, seq, os.O_CREATE|os.O_RDONLY)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
@@ -104,10 +107,36 @@ out:
 func (r *reader) refreshMsgNum() error {
 	idxFileState, err := r.idxFp.Stat()
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return err
 	}
 	r.curSeqMsgNum = uint32(idxFileState.Size()) / idxBytes
 	return nil
+}
+
+func (r *reader) loadMsgData(bufOffset, bufBytes uint32) ([]byte, error) {
+	buf := make([]byte, bufBytes)
+
+	n, err := r.dataFp.ReadAt(buf, int64(bufOffset))
+	if err != nil {
+		util.Logger.Error(nil, err)
+		return nil, err
+	}
+
+	if uint32(n) < bufBytes {
+		util.Logger.Error(nil, errFileCorrupted)
+		return nil, errFileCorrupted
+	}
+
+	boundaryBegin := binary.LittleEndian.Uint16(buf[:bufBoundaryBytes])
+	boundaryEnd := binary.LittleEndian.Uint16(buf[bufBytes-bufBoundaryBytes:])
+
+	if boundaryBegin != bufBoundaryBegin || boundaryEnd != bufBoundaryEnd {
+		util.Logger.Error(nil, errFileCorrupted)
+		return nil, errFileCorrupted
+	}
+
+	return buf[bufBoundaryBytes : bufBytes-bufBoundaryBytes], nil
 }
 
 func (r *reader) loadMsgIdxes() error {
@@ -124,11 +153,13 @@ func (r *reader) loadMsgIdxes() error {
 		_, err := os.Stat(genIdxFileName(r.Subscriber.baseDir, r.Subscriber.topic, r.bootMarker.bootSeq))
 		if err != nil {
 			if !os.IsNotExist(err) {
+				util.Logger.Error(nil, err)
 				return err
 			}
 
 			startMsgId, err = scanDirToParseNewestSeq(r.Subscriber.baseDir, r.Subscriber.topic)
 			if err != nil {
+				util.Logger.Error(nil, err)
 				return err
 			}
 		}
@@ -136,16 +167,19 @@ func (r *reader) loadMsgIdxes() error {
 		if startMsgId == 0 {
 			firstConsumeFp, err := makeSeqIdxFp(r.Subscriber.baseDir, r.Subscriber.topic, r.bootMarker.bootSeq, os.O_RDONLY)
 			if err != nil {
+				util.Logger.Error(nil, err)
 				return err
 			}
 
 			idxBuf := make([]byte, idxBytes)
 			n, err := firstConsumeFp.ReadAt(idxBuf, int64(r.bootMarker.bootIdxOffset*idxBytes))
 			if err != nil {
+				util.Logger.Error(nil, err)
 				return err
 			}
 
 			if n < idxBytes {
+				util.Logger.Error(nil, errFileCorrupted)
 				return errFileCorrupted
 			}
 
@@ -154,6 +188,7 @@ func (r *reader) loadMsgIdxes() error {
 	} else {
 		fileState, err := r.idxFp.Stat()
 		if err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 
@@ -164,6 +199,7 @@ func (r *reader) loadMsgIdxes() error {
 		}
 
 		if fileSize%idxBytes > 0 {
+			util.Logger.Error(nil, errFileCorrupted)
 			return errFileCorrupted
 		}
 
@@ -184,6 +220,7 @@ func (r *reader) loadMsgIdxes() error {
 		n, err := r.idxFp.ReadAt(idxBuf, int64(seekIdxBufOffset))
 		if err != nil {
 			if err != io.EOF {
+				util.Logger.Error(nil, err)
 				return err
 			}
 			isEOF = true
@@ -194,6 +231,7 @@ func (r *reader) loadMsgIdxes() error {
 		}
 
 		if n%idxBytes > 0 {
+			util.Logger.Error(nil, errFileCorrupted)
 			return errFileCorrupted
 		}
 
@@ -207,6 +245,7 @@ func (r *reader) loadMsgIdxes() error {
 			boundaryBegin := bin.Uint16(idxBuf[:bufBoundaryBytes])
 			boundaryEnd := bin.Uint16(idxBuf[idxBytes-bufBoundaryBytes:])
 			if boundaryBegin != bufBoundaryBegin || boundaryEnd != bufBoundaryEnd {
+				util.Logger.Error(nil, errFileCorrupted)
 				return errFileCorrupted
 			}
 

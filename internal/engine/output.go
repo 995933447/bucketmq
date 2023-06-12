@@ -51,55 +51,66 @@ func newOutput(writer *Writer, seq uint64) (*output, error) {
 
 	out.msgIdGen, err = newMsgIdGen(out.Writer.baseDir, out.Writer.topic)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	out.idxUndoFp, err = makeIdxUndoFp(out.Writer.baseDir, out.Writer.topic)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	idxUndoFileInfo, err := out.idxUndoFp.Stat()
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	if idxUndoFileInfo.Size() > 0 {
 		n, err := out.idxUndoFp.ReadAt(out.idxUndoBuf[:], 0)
 		if err != nil && err != io.EOF {
+			util.Logger.Error(nil, err)
 			return nil, err
 		}
 
 		if n != idxUndoBytes {
+			util.Logger.Error(nil, errFileCorrupted)
 			return nil, errFileCorrupted
 		}
 
 		if err = out.undoIdx(); err != nil {
+			util.Logger.Error(nil, err)
 			return nil, err
 		}
 	}
 
 	out.dataUndoFp, err = makeDataUndoFp(out.Writer.baseDir, out.Writer.topic)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	dataUndoFileInfo, err := out.dataUndoFp.Stat()
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	if dataUndoFileInfo.Size() > 0 {
 		n, err := out.dataUndoFp.ReadAt(out.dataUndoBuf[:], 0)
 		if err != nil && err != io.EOF {
+			util.Logger.Error(nil, err)
 			return nil, err
 		}
 
 		if n != dataUndoBytes {
+			util.Logger.Error(nil, errFileCorrupted)
 			return nil, errFileCorrupted
 		}
 
 		if err = out.undoData(); err != nil {
+			util.Logger.Error(nil, err)
 			return nil, err
 		}
 	}
@@ -147,6 +158,7 @@ func (o *output) isCorrupted() (bool, error) {
 	if o.dataFp != nil {
 		fileState, err := o.dataFp.Stat()
 		if err != nil {
+			util.Logger.Error(nil, err)
 			return false, err
 		}
 		curBytes := uint32(fileState.Size())
@@ -183,6 +195,7 @@ func (o *output) write(msgList []*Msg) error {
 
 	if o.idxFp == nil || o.dataFp == nil || o.openFileTime.Format("2006010215") != now.Format("2006010215") {
 		if err := o.openNewFile(); err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 	}
@@ -229,6 +242,7 @@ func (o *output) write(msgList []*Msg) error {
 		// file had reached max size
 		if batchWriteIdxNum <= 0 {
 			if err := o.openNewFile(); err != nil {
+				util.Logger.Error(nil, err)
 				return err
 			}
 			continue
@@ -236,6 +250,7 @@ func (o *output) write(msgList []*Msg) error {
 
 		origMaxMsgId := o.msgIdGen.curMaxMsgId
 		if err := o.msgIdGen.Incr(uint64(batchWriteIdxNum)); err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 
@@ -292,12 +307,14 @@ func (o *output) write(msgList []*Msg) error {
 		}
 
 		if err := o.logDataUndo(); err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 
 		_, err := o.dataFp.Write(o.dataBuf[:dataBufBytes])
 		if err != nil {
 			if err := o.clearDataUndo(); err != nil {
+				util.Logger.Error(nil, err)
 				panic(err)
 			}
 			return err
@@ -310,24 +327,28 @@ func (o *output) write(msgList []*Msg) error {
 		if err != nil {
 			// rollback
 			if err := o.undoData(); err != nil {
+				util.Logger.Error(nil, err)
 				panic(err)
 			}
 			return err
 		}
 
 		if err = o.clearDataUndo(); err != nil {
+			util.Logger.Error(nil, err)
 			panic(err)
 		}
 
 		o.writtenDataBytes = dataBufBytes
 
 		if err = o.logIdxUndo(); err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 
 		_, err = o.idxFp.Write(o.idxBuf[:idxBufBytes])
 		if err != nil {
 			if err := o.clearIdxUndo(); err != nil {
+				util.Logger.Error(nil, err)
 				panic(err)
 			}
 			return err
@@ -340,6 +361,7 @@ func (o *output) write(msgList []*Msg) error {
 		if err != nil {
 			// data file has callback success, only rollback index file
 			if err := o.undoIdx(); err != nil {
+				util.Logger.Error(nil, err)
 				panic(err)
 			}
 
@@ -347,6 +369,7 @@ func (o *output) write(msgList []*Msg) error {
 		}
 
 		if err = o.clearIdxUndo(); err != nil {
+			util.Logger.Error(nil, err)
 			panic(err)
 		}
 
@@ -372,6 +395,7 @@ func (o *output) write(msgList []*Msg) error {
 
 		if needSwitchNewFile {
 			if err = o.openNewFile(); err != nil {
+				util.Logger.Error(nil, err)
 				return err
 			}
 		}
@@ -402,6 +426,7 @@ func (o *output) logIdxUndo() error {
 		n, err := o.idxUndoFp.WriteAt(o.idxUndoBuf[total:], int64(total))
 		if err != nil {
 			if err := o.clearIdxUndo(); err != nil {
+				util.Logger.Error(nil, err)
 				panic(err)
 			}
 			return err
@@ -421,11 +446,13 @@ func (o *output) undoIdx() error {
 
 	if err := o.idxFp.Truncate(int64(origIdxFileBytes)); err != nil {
 		if err = os.Truncate(o.idxFp.Name(), int64(origIdxFileBytes)); err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 	}
 
 	if err := o.clearIdxUndo(); err != nil {
+		util.Logger.Error(nil, err)
 		return err
 	}
 
@@ -435,6 +462,7 @@ func (o *output) undoIdx() error {
 func (o *output) clearIdxUndo() error {
 	if err := o.idxUndoFp.Truncate(0); err != nil {
 		if err = os.Truncate(o.idxUndoFp.Name(), 0); err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 	}
@@ -445,6 +473,7 @@ func (o *output) undoData() error {
 	origWrittenDataBytes := binary.LittleEndian.Uint32(o.dataUndoBuf[bufBoundaryBytes+8:])
 	if err := o.dataFp.Truncate(int64(origWrittenDataBytes)); err != nil {
 		if err = os.Truncate(o.dataFp.Name(), int64(origWrittenDataBytes)); err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 	}
@@ -452,6 +481,7 @@ func (o *output) undoData() error {
 	o.writtenDataBytes = origWrittenDataBytes
 
 	if err := o.clearDataUndo(); err != nil {
+		util.Logger.Error(nil, err)
 		return err
 	}
 
@@ -468,6 +498,7 @@ func (o *output) logDataUndo() error {
 		n, err := o.dataUndoFp.WriteAt(o.dataUndoBuf[total:], int64(total))
 		if err != nil {
 			if err := o.clearDataUndo(); err != nil {
+				util.Logger.Error(nil, err)
 				panic(err)
 			}
 			return err
@@ -485,6 +516,7 @@ func (o *output) logDataUndo() error {
 func (o *output) clearDataUndo() error {
 	if err := o.dataUndoFp.Truncate(0); err != nil {
 		if err = os.Truncate(o.dataUndoFp.Name(), 0); err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 	}
@@ -499,11 +531,13 @@ func (o *output) openNewFile() error {
 
 	idxFp, err := makeSeqIdxFp(o.Writer.baseDir, o.Writer.topic, curSeq, os.O_CREATE|os.O_APPEND)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return err
 	}
 
 	dataFp, err := makeSeqDataFp(o.Writer.baseDir, o.Writer.topic, curSeq, os.O_CREATE|os.O_APPEND)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return err
 	}
 
@@ -516,15 +550,18 @@ func (o *output) openNewFile() error {
 
 	idxFileState, err := o.idxFp.Stat()
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return err
 	}
 
 	dataFileState, err := o.dataFp.Stat()
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return err
 	}
 
 	if idxFileState.Size()%idxBytes > 0 {
+		util.Logger.Error(nil, errFileCorrupted)
 		return errFileCorrupted
 	}
 

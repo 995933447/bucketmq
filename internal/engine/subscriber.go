@@ -137,6 +137,14 @@ func (s *Subscriber) loop() {
 			}
 		case consumeCh := <-s.readyWorkerCh:
 			if msg := s.queue.pop(isBucketPendingNotFull); msg != nil {
+				if msg.data == nil {
+					err := s.readerGrp.loadMsgData(msg)
+					if err != nil {
+						util.Logger.Error(nil, err)
+						break
+					}
+				}
+
 				s.bucketPendingNumRec.addPending(msg.bucketId)
 				consumeCh <- msg
 				break

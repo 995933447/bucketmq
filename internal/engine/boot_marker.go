@@ -23,16 +23,25 @@ func newBootMarker(readerGrp *readerGrp) (*bootMarker, error) {
 	boot := &bootMarker{
 		readerGrp: readerGrp,
 	}
+
 	var err error
 	boot.fp, err = makeLoadBootFp(boot.readerGrp.Subscriber.baseDir, boot.readerGrp.Subscriber.topic, boot.readerGrp.Subscriber.name)
 	if err != nil {
 		util.Logger.Error(nil, err)
 		return nil, err
 	}
+
+	boot.undoFp, err = makeLoadBootUndoFp(boot.readerGrp.Subscriber.baseDir, boot.readerGrp.Subscriber.topic, boot.readerGrp.Subscriber.name)
+	if err != nil {
+		util.Logger.Error(nil, err)
+		return nil, err
+	}
+
 	if err = boot.load(); err != nil {
 		util.Logger.Error(nil, err)
 		return nil, err
 	}
+
 	return boot, nil
 }
 

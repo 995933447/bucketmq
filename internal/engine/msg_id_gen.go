@@ -2,6 +2,7 @@ package engine
 
 import (
 	"encoding/binary"
+	"github.com/995933447/bucketmq/internal/util"
 	"io"
 	"os"
 	"time"
@@ -35,36 +36,43 @@ func newMsgIdGen(baseDir, topic string) (*msgIdGen, error) {
 	)
 	gen.fp, isNewCreate, err = makeMsgIdFp(baseDir, topic)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	gen.undoFp, err = makeMsgIdUndoFp(baseDir, topic)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	undoFileInfo, err := gen.undoFp.Stat()
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	if undoFileInfo.Size() > 0 {
 		n, err := gen.undoFp.ReadAt(gen.undoBuf[:], 0)
 		if err != nil && err != io.EOF {
+			util.Logger.Error(nil, err)
 			return nil, err
 		}
 
 		if n != msgIdGenBytes {
+			util.Logger.Error(nil, errFileCorrupted)
 			return nil, errFileCorrupted
 		}
 
 		if err = gen.undo(); err != nil {
+			util.Logger.Error(nil, err)
 			return nil, err
 		}
 	}
 
 	if !isNewCreate {
 		if err = gen.load(); err != nil {
+			util.Logger.Error(nil, err)
 			return nil, err
 		}
 	}
@@ -76,6 +84,7 @@ func (g *msgIdGen) Incr(incr uint64) error {
 	now := time.Now().Unix()
 
 	if err := g.logUndo(); err != nil {
+		util.Logger.Error(nil, err)
 		return err
 	}
 
@@ -89,6 +98,7 @@ func (g *msgIdGen) Incr(incr uint64) error {
 		n, err := g.fp.WriteAt(g.buf[total:], int64(total))
 		if err != nil {
 			if err := g.undo(); err != nil {
+				util.Logger.Error(nil, err)
 				panic(err)
 			}
 			return err
@@ -107,6 +117,7 @@ func (g *msgIdGen) Incr(incr uint64) error {
 	})
 	if err != nil {
 		if err := g.undo(); err != nil {
+			util.Logger.Error(nil, err)
 			panic(err)
 		}
 
@@ -114,6 +125,7 @@ func (g *msgIdGen) Incr(incr uint64) error {
 	}
 
 	if err = g.clearUndo(); err != nil {
+		util.Logger.Error(nil, err)
 		panic(err)
 	}
 
@@ -129,6 +141,7 @@ func (g *msgIdGen) logUndo() error {
 		n, err := g.undoFp.WriteAt(g.undoBuf[total:], int64(total))
 		if err != nil {
 			if err := g.clearUndo(); err != nil {
+				util.Logger.Error(nil, err)
 				panic(err)
 			}
 
@@ -150,6 +163,7 @@ func (g *msgIdGen) undo() error {
 	for {
 		n, err := g.fp.WriteAt(g.undoBuf[total:], int64(total))
 		if err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 
@@ -161,6 +175,7 @@ func (g *msgIdGen) undo() error {
 	}
 
 	if err := g.clearUndo(); err != nil {
+		util.Logger.Error(nil, err)
 		return err
 	}
 
@@ -172,6 +187,7 @@ func (g *msgIdGen) undo() error {
 func (g *msgIdGen) clearUndo() error {
 	if err := g.undoFp.Truncate(0); err != nil {
 		if err = os.Truncate(g.undoFp.Name(), 0); err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 	}
@@ -181,6 +197,7 @@ func (g *msgIdGen) clearUndo() error {
 func (g *msgIdGen) load() error {
 	buf, err := io.ReadAll(g.fp)
 	if err != nil && err != io.EOF {
+		util.Logger.Error(nil, err)
 		return err
 	}
 
@@ -189,6 +206,7 @@ func (g *msgIdGen) load() error {
 	}
 
 	if len(buf) != msgIdGenBytes {
+		util.Logger.Error(nil, errFileCorrupted)
 		return errFileCorrupted
 	}
 
@@ -196,6 +214,7 @@ func (g *msgIdGen) load() error {
 	binaryEnd := binary.LittleEndian.Uint16(buf[bufBoundaryBytes+8:])
 
 	if binaryBegin != bufBoundaryBegin || binaryEnd != bufBoundaryEnd {
+		util.Logger.Error(nil, errFileCorrupted)
 		return errFileCorrupted
 	}
 

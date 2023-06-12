@@ -1,6 +1,8 @@
 package engine
 
 import (
+	"github.com/995933447/bucketmq/internal/util"
+	"github.com/golang/snappy"
 	"os"
 	"sort"
 	"strconv"
@@ -26,11 +28,13 @@ func newReaderGrp(subscriber *Subscriber, loadMode LoadMsgMode, startMsgId uint6
 	var err error
 	grp.msgIdGen, err = newMsgIdGen(subscriber.baseDir, subscriber.topic)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	grp.bootMarker, err = newBootMarker(grp)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
@@ -40,6 +44,7 @@ func newReaderGrp(subscriber *Subscriber, loadMode LoadMsgMode, startMsgId uint6
 	}
 
 	if err = grp.load(); err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
@@ -70,11 +75,13 @@ func (rg *readerGrp) load() error {
 	dir := GetTopicFileDir(rg.Subscriber.baseDir, rg.Subscriber.topic)
 
 	if err := mkdirIfNotExist(dir); err != nil {
+		util.Logger.Error(nil, err)
 		return err
 	}
 
 	files, err := os.ReadDir(dir)
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return err
 	}
 
@@ -98,6 +105,7 @@ func (rg *readerGrp) load() error {
 
 		seq, err := strconv.ParseUint(seqStr, 10, 64)
 		if err != nil {
+			util.Logger.Error(nil, err)
 			return err
 		}
 
@@ -159,6 +167,7 @@ func (rg *readerGrp) load() error {
 		if seq < rg.maxSeq {
 			ok, err := reader.isFinished()
 			if err != nil {
+				util.Logger.Error(nil, err)
 				return err
 			}
 
@@ -177,6 +186,30 @@ func (rg *readerGrp) load() error {
 	return nil
 }
 
+func (rg *readerGrp) loadMsgData(msg *FileMsg) error {
+	reader, err := rg.loadSpec(msg.seq)
+	if err != nil {
+		util.Logger.Error(nil, err)
+		return err
+	}
+
+	msg.data, err = reader.loadMsgData(msg.dataOffset, msg.dataBytes)
+	if err != nil {
+		util.Logger.Error(nil, err)
+		return err
+	}
+
+	if msg.enabledCompressed {
+		msg.data, err = snappy.Decode(nil, msg.data)
+		if err != nil {
+			util.Logger.Error(nil, err)
+			return err
+		}
+	}
+
+	return nil
+}
+
 func (rg *readerGrp) loadSpec(seq uint64) (*reader, error) {
 	var (
 		read *reader
@@ -186,22 +219,26 @@ func (rg *readerGrp) loadSpec(seq uint64) (*reader, error) {
 	if read, ok = rg.seqToReaderMap[seq]; !ok {
 		read, err = newReader(rg, seq)
 		if err != nil {
+			util.Logger.Error(nil, err)
 			return nil, err
 		}
 	}
 
 	err = read.refreshMsgNum()
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	err = read.finishRec.load()
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
 	err = read.loadMsgIdxes()
 	if err != nil {
+		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
