@@ -8,22 +8,21 @@ import (
 )
 
 func Recover() grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		defer util.StackRecover()
-		resp, err = handler(ctx, req)
-		return
+		return handler(ctx, req)
 	}
 }
 
 func AutoValidate() grpc.UnaryServerInterceptor {
-	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (resp interface{}, err error) {
+	return func(ctx context.Context, req interface{}, info *grpc.UnaryServerInfo, handler grpc.UnaryHandler) (interface{}, error) {
 		if validator, ok := req.(rpc.Validator); ok {
-			err = validator.Validate()
+			err := validator.Validate()
 			if err != nil {
-				return
+				util.Logger.Errorf(nil, "err is %v", err)
+				return nil, err
 			}
 		}
-		resp, err = handler(ctx, req)
-		return
+		return handler(ctx, req)
 	}
 }
