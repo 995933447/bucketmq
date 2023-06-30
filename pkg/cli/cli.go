@@ -1,6 +1,9 @@
 package cli
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"github.com/995933447/bucketmq/internal/util"
 	"github.com/995933447/bucketmq/pkg/discover"
 	"github.com/995933447/bucketmq/pkg/rpc/broker"
@@ -14,19 +17,32 @@ import (
 	"time"
 )
 
-func NewBucketMQ(cluster string, etcdCfg *clientv3.Config) (*Cli, error) {
+func NewBucketMQ(svrName string, etcdCfg *clientv3.Config) (*Cli, error) {
 	cli := &Cli{
 		consumers: map[string]*Consumer{},
 	}
 
 	var err error
-	cli.discovery, err = etcd.NewDiscovery(discover.GetDiscoverNamePrefix(cluster), time.Second*5, *etcdCfg)
+	cli.discovery, err = etcd.NewDiscovery(discover.SrvNamePrefix, time.Second*5, *etcdCfg)
 	if err != nil {
 		util.Logger.Error(nil, err)
 		return nil, err
 	}
 
-	conn, err := grpc.Dial(discover.GetGrpcResolveSchema(cluster)+":///"+discover.SrvNameBroker, grpcsuit.RoundRobinDialOpts...)
+	service, err := cli.discovery.Discover(context.Background(), svrName)
+	if err != nil {
+		util.Logger.Error(nil, err)
+		return nil, err
+	}
+
+	if len(service.Nodes) == 0 {
+		util.Logger.Error(nil, "not found service")
+		return nil, errors.New("not found service")
+	}
+
+	// 需要随机选举一个节点
+	node := service.Nodes[0]
+	conn, err := grpc.Dial(fmt.Sprintf("%s:%d", node.Host, node.Port), grpcsuit.RoundRobinDialOpts...)
 	if err != nil {
 		util.Logger.Error(nil, err)
 		return nil, err
