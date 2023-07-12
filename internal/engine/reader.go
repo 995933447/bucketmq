@@ -52,7 +52,7 @@ func newReader(rg *readerGrp, seq uint64) (*reader, error) {
 		return nil, err
 	}
 
-	r.idxFp, err = makeSeqDataFp(r.readerGrp.Subscriber.baseDir, r.readerGrp.Subscriber.topic, seq, os.O_CREATE|os.O_RDONLY)
+	r.dataFp, err = makeSeqDataFp(r.readerGrp.Subscriber.baseDir, r.readerGrp.Subscriber.topic, seq, os.O_CREATE|os.O_RDONLY)
 	if err != nil {
 		util.Logger.Error(nil, err)
 		return nil, err
